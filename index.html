@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medical SKILL Pipeline Viewer</title>
+    <!-- Tailwind CSS with Typography plugin for clean Markdown formatting -->
+    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+    <!-- Marked.js for parsing Markdown to HTML -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Lucide Icons for consistent interface symbols -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+    </style>
+</head>
+
+<body class="bg-slate-50 text-slate-800 flex flex-col h-screen overflow-hidden">
+
+    <!-- Top Navigation Header -->
+    <header
+        class="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between flex-shrink-0 z-10 shadow-sm">
+        <div class="flex items-center space-x-3">
+            <div class="bg-blue-600 text-white p-2 rounded-lg">
+                <i data-lucide="stethoscope" class="w-6 h-6"></i>
+            </div>
+            <div>
+                <h1 class="text-lg font-bold text-slate-900">Medical Skill Pipeline</h1>
+                <p class="text-xs text-slate-500">Repository Viewer & Code Copier</p>
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-4">
+            <!-- Repo Indicator -->
+            <div
+                class="hidden md:flex items-center bg-slate-100 rounded-full px-3 py-1 text-xs text-slate-600 space-x-1.5 border border-slate-200">
+                <i data-lucide="github" class="w-3.5 h-3.5"></i>
+                <span class="font-medium">panascha/SKILL</span>
+                <span id="branch-badge"
+                    class="bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded text-[10px]">main</span>
+            </div>
+
+            <!-- Settings Button -->
+            <button onclick="toggleSettingsModal()"
+                class="flex items-center space-x-1 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-sm transition-colors">
+                <i data-lucide="settings" class="w-4 h-4"></i>
+                <span>ตั้งค่า API</span>
+            </button>
+
+            <!-- Global Refresh -->
+            <button onclick="fetchRepository()"
+                class="flex items-center space-x-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm transition-colors shadow-sm">
+                <i data-lucide="refresh-cw" class="w-4 h-4" id="refresh-icon"></i>
+                <span>ซิงค์ข้อมูลใหม่</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <div class="flex flex-1 overflow-hidden">
+
+        <!-- Sidebar - File Tree & Directory Browser -->
+        <aside class="w-80 bg-white border-r border-slate-200 flex flex-col flex-shrink-0">
+            <!-- Filter Section -->
+            <div class="p-4 border-b border-slate-100">
+                <div class="relative">
+                    <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <i data-lucide="search" class="w-4 h-4 text-slate-400"></i>
+                    </span>
+                    <input type="text" id="file-search" oninput="filterFiles()" placeholder="ค้นหาไฟล์ในคลังระบบ..."
+                        class="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all">
+                </div>
+            </div>
+
+            <!-- File Tree Display -->
+            <div class="flex-1 overflow-y-auto p-4 custom-scrollbar" id="file-tree-container">
+                <div class="flex flex-col items-center justify-center h-full text-slate-400 space-y-2">
+                    <i data-lucide="loader-2" class="w-6 h-6 animate-spin text-blue-500"></i>
+                    <span class="text-xs">กำลังสแกนโครงสร้าง Repository...</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Right Pane - Main Workspace Layout (Vertical Stack) -->
+        <main class="flex-1 flex flex-col overflow-hidden">
+
+            <!-- Section A: Pipeline Visualizer (Top horizontal display) -->
+            <section class="bg-slate-100 border-b border-slate-200 p-4 overflow-x-auto flex-shrink-0">
+                <div class="max-w-7xl mx-auto">
+                    <h3
+                        class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center space-x-1">
+                        <i data-lucide="milestone" class="w-3.5 h-3.5"></i>
+                        <span>Master Pipeline: ลำดับขั้นตอนการใช้เครื่องมือ</span>
+                    </h3>
+
+                    <div class="flex items-stretch justify-between space-x-3 min-w-[900px]">
+                        <!-- Step 1 -->
+                        <div onclick="selectPipelineStep('med/slide-to-markdown.md')"
+                            class="flex-1 bg-white hover:border-blue-400 border border-slate-200 rounded-xl p-3.5 cursor-pointer shadow-sm hover:shadow transition-all relative overflow-hidden group">
+                            <div
+                                class="absolute top-0 left-0 w-1.5 h-full bg-slate-300 group-hover:bg-blue-500 transition-colors">
+                            </div>
+                            <div class="pl-2">
+                                <span class="text-[10px] font-bold text-slate-400">ขั้นตอนที่ 1</span>
+                                <h4 class="text-sm font-bold text-slate-800">1. แปลงไฟล์</h4>
+                                <p class="text-[11px] text-slate-500 mt-0.5">Lecture.pdf → notes-raw.md</p>
+                                <div class="text-[10px] text-blue-600 font-medium mt-1.5 flex items-center">
+                                    <span>slide-to-markdown</span>
+                                    <i data-lucide="chevron-right" class="w-3 h-3 ml-0.5"></i>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-center text-slate-400"><i data-lucide="arrow-right"
+                                class="w-4 h-4"></i></div>
+
+                        <!-- Step 2 -->
+                        <div onclick="selectPipelineStep('med/lecture-synthesizer.md')"
+                            class="flex-1 bg-white hover:border-blue-400 border border-slate-200 rounded-xl p-3.5 cursor-pointer shadow-sm hover:shadow transition-all relative overflow-hidden group">
+                            <div
+                                class="absolute top-0 left-0 w-1.5 h-full bg-slate-300 group-hover:bg-blue-500 transition-colors">
+                            </div>
+                            <div class="pl-2">
+                                <span class="text-[10px] font-bold text-slate-400">ขั้นตอนที่ 2</span>
+                                <h4 class="text-sm font-bold text-slate-800">2. รวมเสียงบรรยาย</h4>
+                                <p class="text-[11px] text-slate-500 mt-0.5">Raw Notes + Transcript</p>
+                                <div class="text-[10px] text-blue-600 font-medium mt-1.5 flex items-center">
+                                    <span>lecture-synthesizer</span>
+                                    <i data-lucide="chevron-right" class="w-3 h-3 ml-0.5"></i>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-center text-slate-400"><i data-lucide="arrow-right"
+                                class="w-4 h-4"></i></div>
+
+                        <!-- Step 3 -->
+                        <div onclick="selectPipelineStep('med/slide-enrich.md')"
+                            class="flex-1 bg-white hover:border-blue-400 border border-slate-200 rounded-xl p-3.5 cursor-pointer shadow-sm hover:shadow transition-all relative overflow-hidden group">
+                            <div
+                                class="absolute top-0 left-0 w-1.5 h-full bg-slate-300 group-hover:bg-blue-500 transition-colors">
+                            </div>
+                            <div class="pl-2">
+                                <span class="text-[10px] font-bold text-slate-400">ขั้นตอนที่ 3</span>
+                                <h4 class="text-sm font-bold text-slate-800">3. เสริมความรู้</h4>
+                                <p class="text-[11px] text-slate-500 mt-0.5">notes-synthesized → enriched</p>
+                                <div class="text-[10px] text-blue-600 font-medium mt-1.5 flex items-center">
+                                    <span>slide-enrich</span>
+                                    <i data-lucide="chevron-right" class="w-3 h-3 ml-0.5"></i>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-center text-slate-400"><i data-lucide="arrow-right"
+                                class="w-4 h-4"></i></div>
+
+                        <!-- Step 4 -->
+                        <div onclick="selectPipelineStep('med/curriculum-tracker.md')"
+                            class="flex-1 bg-white hover:border-blue-400 border border-slate-200 rounded-xl p-3.5 cursor-pointer shadow-sm hover:shadow transition-all relative overflow-hidden group">
+                            <div
+                                class="absolute top-0 left-0 w-1.5 h-full bg-slate-300 group-hover:bg-blue-500 transition-colors">
+                            </div>
+                            <div class="pl-2">
+                                <span class="text-[10px] font-bold text-slate-400">ขั้นตอนที่ 4</span>
+                                <h4 class="text-sm font-bold text-slate-800">4. ตรวจสอบความซ้ำ</h4>
+                                <p class="text-[11px] text-slate-500 mt-0.5">ตรวจ Overlap กับบทอื่น</p>
+                                <div class="text-[10px] text-blue-600 font-medium mt-1.5 flex items-center">
+                                    <span>curriculum-tracker</span>
+                                    <i data-lucide="chevron-right" class="w-3 h-3 ml-0.5"></i>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-center text-slate-400"><i data-lucide="arrow-right"
+                                class="w-4 h-4"></i></div>
+
+                        <!-- Step 5 -->
+                        <div onclick="selectPipelineStep('med/lecture-crystallizer.md')"
+                            class="flex-1 bg-white hover:border-blue-400 border border-slate-200 rounded-xl p-3.5 cursor-pointer shadow-sm hover:shadow transition-all relative overflow-hidden group">
+                            <div
+                                class="absolute top-0 left-0 w-1.5 h-full bg-slate-300 group-hover:bg-blue-500 transition-colors">
+                            </div>
+                            <div class="pl-2">
+                                <span class="text-[10px] font-bold text-slate-400">ขั้นตอนที่ 5</span>
+                                <h4 class="text-sm font-bold text-slate-800">5. ตกผลึกเนื้อหา</h4>
+                                <p class="text-[11px] text-slate-500 mt-0.5">ตกผลึกเป็นแนวจำ / Mnemonic</p>
+                                <div class="text-[10px] text-blue-600 font-medium mt-1.5 flex items-center">
+                                    <span>lecture-crystallizer</span>
+                                    <i data-lucide="chevron-right" class="w-3 h-3 ml-0.5"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Section B: File Contents Viewer -->
+            <section class="flex-1 flex flex-col overflow-hidden bg-white">
+                <!-- Viewer Control Toolbar -->
+                <div class="border-b border-slate-200 px-6 py-3 flex items-center justify-between flex-shrink-0">
+                    <div class="flex items-center space-x-2 overflow-hidden">
+                        <i data-lucide="file-text" class="w-5 h-5 text-slate-400 flex-shrink-0"></i>
+                        <span id="current-file-path"
+                            class="text-sm font-medium text-slate-700 truncate">กรุณาเลือกไฟล์ที่ต้องการแสดงข้อมูล</span>
+                    </div>
+
+                    <div class="flex items-center space-x-3">
+                        <!-- View mode toggler -->
+                        <div class="bg-slate-100 rounded-lg p-0.5 flex space-x-1 border border-slate-200 text-xs">
+                            <button onclick="setViewMode('rendered')" id="btn-view-rendered"
+                                class="px-3 py-1 rounded-md font-medium transition-all bg-white text-slate-800 shadow-sm">
+                                รูปแบบแสดงผล (Markdown)
+                            </button>
+                            <button onclick="setViewMode('raw')" id="btn-view-raw"
+                                class="px-3 py-1 rounded-md font-medium transition-all text-slate-600 hover:text-slate-900">
+                                ซอร์สโค้ดดิบ
+                            </button>
+                        </div>
+
+                        <!-- Copy Button -->
+                        <button id="btn-copy" onclick="copyCurrentFileContent()" disabled
+                            class="flex items-center space-x-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-md text-sm font-medium transition-colors shadow-sm cursor-pointer disabled:cursor-not-allowed">
+                            <i data-lucide="copy" class="w-4 h-4"></i>
+                            <span id="copy-text">คัดลอกไฟล์นี้</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Main Viewer Area -->
+                <div class="flex-1 overflow-y-auto p-8 custom-scrollbar bg-slate-50" id="viewer-container">
+                    <!-- Default Landing Message -->
+                    <div id="viewer-empty-state"
+                        class="flex flex-col items-center justify-center h-full text-slate-400 space-y-3">
+                        <div class="bg-white p-4 rounded-full border border-slate-200 shadow-sm">
+                            <i data-lucide="file-code-2" class="w-8 h-8 text-slate-300"></i>
+                        </div>
+                        <div class="text-center max-w-sm">
+                            <p class="text-sm font-medium text-slate-600">ยังไม่ได้เลือกเอกสาร</p>
+                            <p class="text-xs text-slate-400 mt-1">คลิกเลือกไฟล์ Markdown จากเมนูด้านซ้ายมือ
+                                หรือคลิกขั้นตอน Master Pipeline ด้านบนเพื่อเริ่มโหลดแบบร่างสกิล</p>
+                        </div>
+                    </div>
+
+                    <!-- Markdown Rendered Destination -->
+                    <div id="viewer-rendered"
+                        class="prose max-w-none prose-slate hidden bg-white p-8 rounded-xl border border-slate-200 shadow-sm">
+                    </div>
+
+                    <!-- Raw Code Area -->
+                    <pre id="viewer-raw"
+                        class="text-xs text-slate-800 bg-slate-900 text-slate-100 p-6 rounded-xl overflow-x-auto border border-slate-800 font-mono hidden max-w-none shadow-sm"></pre>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Optional API Configuration Modal -->
+    <div id="settings-modal"
+        class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+        <div class="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-md overflow-hidden">
+            <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <i data-lucide="settings" class="w-5 h-5 text-slate-500"></i>
+                    <h3 class="font-bold text-slate-800">ตั้งค่าการเชื่อมต่อ API</h3>
+                </div>
+                <button onclick="toggleSettingsModal()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x"
+                        class="w-5 h-5"></i></button>
+            </div>
+            <div class="p-6 space-y-4">
+                <p class="text-xs text-slate-500 leading-relaxed">
+                    หน้าเว็บนี้เข้าใช้ข้อมูล GitHub API สาธารณะ หากคุณใช้งานถี่จนติดข้อจำกัดด้านความเร็ว (Rate Limit)
+                    หรือต้องการดึงข้อมูลจากส่วนตัว โปรดกรอกข้อมูล Access Token เพื่อปลดเกณฑ์ข้อกำหนดได้ที่ช่องนี้
+                </p>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">GitHub
+                        Personal Access Token (PAT)</label>
+                    <input type="password" id="api-token" placeholder="ghp_xxxxxxxxxxxx"
+                        class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label
+                        class="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">Branch</label>
+                    <input type="text" id="api-branch" placeholder="main" value="main"
+                        class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+            </div>
+            <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end space-x-2">
+                <button onclick="toggleSettingsModal()"
+                    class="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-xs font-medium transition-colors">ยกเลิก</button>
+                <button onclick="saveSettings()"
+                    class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors">บันทึกตั้งค่า</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Client-side Application Logic -->
+    <script>
+        // Repository configurations
+        const REPO_OWNER = 'panascha';
+        const REPO_NAME = 'SKILL';
+
+        let rawTreeData = [];
+        let selectedFilePath = '';
+        let selectedFileContent = '';
+        let currentViewMode = 'rendered'; // 'rendered' | 'raw'
+
+        // Settings loaded from local storage
+        let gitToken = localStorage.getItem('skill_viewer_token') || '';
+        let gitBranch = localStorage.getItem('skill_viewer_branch') || 'main';
+
+        // Initialize App
+        document.addEventListener("DOMContentLoaded", () => {
+            document.getElementById('api-token').value = gitToken;
+            document.getElementById('api-branch').value = gitBranch;
+            document.getElementById('branch-badge').innerText = gitBranch;
+
+            lucide.createIcons();
+            fetchRepository();
+        });
+
+        // Set Headers with optional GitHub PAT
+        function getFetchHeaders() {
+            const headers = {
+                'Accept': 'application/vnd.github.v3+json'
+            };
+            if (gitToken) {
+                headers['Authorization'] = `token ${gitToken}`;
+            }
+            return headers;
+        }
+
+        // Fetch directory structure from Github recursively
+        async function fetchRepository() {
+            const refreshIcon = document.getElementById('refresh-icon');
+            refreshIcon.classList.add('animate-spin');
+
+            const fileTreeContainer = document.getElementById('file-tree-container');
+            fileTreeContainer.innerHTML = `
+                <div class="flex flex-col items-center justify-center h-full text-slate-400 space-y-2">
+                    <i data-lucide="loader-2" class="w-6 h-6 animate-spin text-blue-500"></i>
+                    <span class="text-xs">กำลังติดต่อ GitHub API...</span>
+                </div>
+            `;
+            lucide.createIcons();
+
+            try {
+                // Request recursive tree representation
+                const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/git/trees/${gitBranch}?recursive=1`;
+                const response = await fetch(url, { headers: getFetchHeaders() });
+
+                if (!response.ok) {
+                    throw new Error(`Error: ${response.status} (${response.statusText})`);
+                }
+
+                const data = await response.json();
+                rawTreeData = data.tree.filter(item => item.type === 'blob'); // extract only files
+                renderTreeUI(rawTreeData);
+            } catch (err) {
+                fileTreeContainer.innerHTML = `
+                    <div class="text-center p-4">
+                        <i data-lucide="alert-circle" class="w-8 h-8 text-rose-500 mx-auto mb-2"></i>
+                        <h4 class="text-sm font-semibold text-slate-700">ล้มเหลวในการเชื่อมต่อ</h4>
+                        <p class="text-xs text-slate-400 mt-1 leading-relaxed">${err.message}</p>
+                        <p class="text-[11px] text-slate-500 mt-3 leading-relaxed">กรณีเกินขีดจำกัดเชื่อมต่อสาธารณะของ GitHub (Rate Limit) แนะนำให้ลงทะเบียน "Token" ผ่านหน้าต่างตั้งค่า API</p>
+                    </div>
+                `;
+                lucide.createIcons();
+            } finally {
+                refreshIcon.classList.remove('animate-spin');
+            }
+        }
+
+        // Render File Tree list inside sidebar
+        function renderTreeUI(items) {
+            const container = document.getElementById('file-tree-container');
+            if (items.length === 0) {
+                container.innerHTML = `<p class="text-center text-xs text-slate-400 py-4">ไม่พบข้อมูลไฟล์ในกิ่งก้านนี้</p>`;
+                return;
+            }
+
+            // Arrange folders and files
+            let html = '<div class="space-y-1">';
+
+            // Build hierarchical layout representation dynamically
+            const fileMap = {};
+            items.forEach(item => {
+                const parts = item.path.split('/');
+                let cur = fileMap;
+                parts.forEach((part, idx) => {
+                    if (!cur[part]) {
+                        cur[part] = idx === parts.length - 1 ? { _file: item } : {};
+                    }
+                    cur = cur[part];
+                });
+            });
+
+            // Convert nested directory structure to HTML string
+            function renderNode(node, name, depth = 0) {
+                const isFile = node.hasOwnProperty('_file');
+                const path = isFile ? node._file.path : name;
+                const paddingLeft = depth * 12 + 4;
+
+                if (isFile) {
+                    if (!path.endsWith('.md')) return ''; // only focus on markdown files
+                    const isSelected = selectedFilePath === path;
+                    return `
+                        <div onclick="loadFileContent('${path}')" class="flex items-center space-x-2 py-1.5 px-3 rounded-lg cursor-pointer transition-all ${isSelected ? 'bg-blue-50 text-blue-700 font-medium' : 'hover:bg-slate-50 text-slate-600 hover:text-slate-900'}" style="padding-left: ${paddingLeft}px">
+                            <i data-lucide="file-text" class="w-4 h-4 text-slate-400 flex-shrink-0"></i>
+                            <span class="text-xs truncate" title="${name}">${name}</span>
+                        </div>
+                    `;
+                } else {
+                    let childrenHtml = '';
+                    for (const key in node) {
+                        childrenHtml += renderNode(node[key], key, depth + 1);
+                    }
+                    if (!childrenHtml) return ''; // ignore empty folders
+                    return `
+                        <div class="space-y-0.5">
+                            <div class="flex items-center space-x-2 py-1.5 px-2 text-slate-400 select-none" style="padding-left: ${paddingLeft}px">
+                                <i data-lucide="folder" class="w-4 h-4 flex-shrink-0"></i>
+                                <span class="text-xs font-semibold uppercase tracking-wider text-slate-500">${name}</span>
+                            </div>
+                            <div class="space-y-0.5 border-l border-slate-100 ml-3.5 pl-1">
+                                ${childrenHtml}
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+
+            for (const key in fileMap) {
+                html += renderNode(fileMap[key], key);
+            }
+            html += '</div>';
+
+            container.innerHTML = html;
+            lucide.createIcons();
+        }
+
+        // Filter files via local search input
+        function filterFiles() {
+            const query = document.getElementById('file-search').value.toLowerCase();
+            const filtered = rawTreeData.filter(item => item.path.toLowerCase().includes(query));
+            renderTreeUI(filtered);
+        }
+
+        // Fetch file details and code block contents
+        async function loadFileContent(path) {
+            selectedFilePath = path;
+
+            // Re-render tree structure to apply active selection state visual
+            renderTreeUI(rawTreeData);
+
+            document.getElementById('current-file-path').innerHTML = `
+                <span class="text-slate-400">Loading...</span>
+            `;
+
+            const viewerContainer = document.getElementById('viewer-container');
+            const emptyState = document.getElementById('viewer-empty-state');
+            emptyState.classList.add('hidden');
+
+            try {
+                // To fetch raw file directly through API (bypassing Base64 limit/errors)
+                const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${path}?ref=${gitBranch}`;
+                const response = await fetch(url, {
+                    headers: {
+                        ...getFetchHeaders(),
+                        'Accept': 'application/vnd.github.v3.raw' // Returns raw text file
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Error: ${response.status} (${response.statusText})`);
+                }
+
+                const content = await response.text();
+                selectedFileContent = content;
+
+                // Show file path in toolbar
+                document.getElementById('current-file-path').innerHTML = `
+                    <span class="text-slate-400 font-normal">panascha/SKILL/</span><span class="font-bold text-slate-800">${path}</span>
+                `;
+
+                // Render views
+                renderViewer();
+
+                // Enable actions
+                document.getElementById('btn-copy').removeAttribute('disabled');
+            } catch (err) {
+                document.getElementById('current-file-path').innerText = 'ล้มเหลวในการดาวน์โหลดไฟล์';
+                viewerContainer.innerHTML = `
+                    <div class="text-center p-8 bg-white border border-slate-200 rounded-xl max-w-md mx-auto mt-12 shadow-sm">
+                        <i data-lucide="x-circle" class="w-10 h-10 text-rose-500 mx-auto mb-3"></i>
+                        <h4 class="font-bold text-slate-800">ล้มเหลวในการเรียกข้อมูลไฟล์</h4>
+                        <p class="text-xs text-slate-500 mt-2 leading-relaxed">${err.message}</p>
+                    </div>
+                `;
+                lucide.createIcons();
+            }
+        }
+
+        // Handle Pipeline Quick Link
+        function selectPipelineStep(path) {
+            loadFileContent(path);
+        }
+
+        // Refresh views based on current toggle state
+        function renderViewer() {
+            const renderDiv = document.getElementById('viewer-rendered');
+            const rawPre = document.getElementById('viewer-raw');
+
+            if (currentViewMode === 'rendered') {
+                renderDiv.classList.remove('hidden');
+                rawPre.classList.add('hidden');
+
+                // Convert md representation using Marked.js
+                renderDiv.innerHTML = marked.parse(selectedFileContent);
+            } else {
+                renderDiv.classList.add('hidden');
+                rawPre.classList.remove('hidden');
+                rawPre.textContent = selectedFileContent;
+            }
+        }
+
+        // Toggle View Mode Options
+        function setViewMode(mode) {
+            currentViewMode = mode;
+
+            const rBtn = document.getElementById('btn-view-rendered');
+            const rawBtn = document.getElementById('btn-view-raw');
+
+            if (mode === 'rendered') {
+                rBtn.className = 'px-3 py-1 rounded-md font-medium transition-all bg-white text-slate-800 shadow-sm';
+                rawBtn.className = 'px-3 py-1 rounded-md font-medium transition-all text-slate-600 hover:text-slate-900';
+            } else {
+                rBtn.className = 'px-3 py-1 rounded-md font-medium transition-all text-slate-600 hover:text-slate-900';
+                rawBtn.className = 'px-3 py-1 rounded-md font-medium transition-all bg-white text-slate-800 shadow-sm';
+            }
+
+            if (selectedFileContent) {
+                renderViewer();
+            }
+        }
+
+        // Copy content directly to device clipboard
+        function copyCurrentFileContent() {
+            if (!selectedFileContent) return;
+
+            navigator.clipboard.writeText(selectedFileContent).then(() => {
+                const btnCopy = document.getElementById('btn-copy');
+                const copyText = document.getElementById('copy-text');
+
+                // Visual feedback of success state
+                btnCopy.classList.remove('bg-emerald-600', 'hover:bg-emerald-700');
+                btnCopy.classList.add('bg-blue-600', 'hover:bg-blue-700');
+                copyText.innerText = 'คัดลอกสำเร็จแล้ว!';
+
+                setTimeout(() => {
+                    btnCopy.classList.remove('bg-blue-600', 'hover:bg-blue-700');
+                    btnCopy.classList.add('bg-emerald-600', 'hover:bg-emerald-700');
+                    copyText.innerText = 'คัดลอกไฟล์นี้';
+                }, 2000);
+            }).catch(err => {
+                alert('ไม่สามารถคัดลอกข้อมูลได้โดยอัตโนมัติ: ' + err);
+            });
+        }
+
+        // Manage Settings Modal
+        function toggleSettingsModal() {
+            const modal = document.getElementById('settings-modal');
+            modal.classList.toggle('hidden');
+        }
+
+        function saveSettings() {
+            gitToken = document.getElementById('api-token').value.trim();
+            gitBranch = document.getElementById('api-branch').value.trim() || 'main';
+
+            localStorage.setItem('skill_viewer_token', gitToken);
+            localStorage.setItem('skill_viewer_branch', gitBranch);
+
+            document.getElementById('branch-badge').innerText = gitBranch;
+            toggleSettingsModal();
+            fetchRepository();
+        }
+    </script>
+</body>
+
+</html>
