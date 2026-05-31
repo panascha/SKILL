@@ -1,602 +1,2041 @@
 <!DOCTYPE html>
-<html lang="th">
+<html lang="th" data-theme="light">
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Medical SKILL Pipeline Viewer</title>
-    <!-- Tailwind CSS with Typography plugin for clean Markdown formatting -->
-    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
-    <!-- Marked.js for parsing Markdown to HTML -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <title>SKILL Viewer</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <!-- Lucide Icons for consistent interface symbols -->
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link
+        href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&display=swap"
+        rel="stylesheet">
     <style>
-        .custom-scrollbar::-webkit-scrollbar {
-            width: 6px;
-            height: 6px;
+        /* ══════════════════════════════════════════
+       THEME VARIABLES
+    ══════════════════════════════════════════ */
+        :root,
+        [data-theme="light"] {
+            --bg: #f5f6f8;
+            --surface: #ffffff;
+            --surface2: #f0f2f5;
+            --border: #e2e5eb;
+            --border2: #d0d5de;
+            --accent: #3b7ff5;
+            --accent-h: #2567e0;
+            --accent2: #0dbe8c;
+            --accent3: #f59e0b;
+            --text: #1a1d27;
+            --text2: #3d4254;
+            --muted: #8892a4;
+            --danger: #e5403b;
+            --shadow: 0 1px 4px rgba(0, 0, 0, .08);
+            --shadow2: 0 4px 20px rgba(0, 0, 0, .10);
+            --gemini-bg: #e8f7f3;
+            --gemini-fg: #0d7a5f;
+            --gemini-bd: #a8e6d5;
+            --claude-bg: #ede8ff;
+            --claude-fg: #5b2db8;
+            --claude-bd: #c4adff;
+            --chatgpt-bg: #e8f5ec;
+            --chatgpt-fg: #1a7d3c;
+            --chatgpt-bd: #97d9aa;
+            --code-bg: #1e2030;
+            --code-fg: #a6d9a0;
         }
 
-        .custom-scrollbar::-webkit-scrollbar-track {
+        [data-theme="dark"] {
+            --bg: #0d0f14;
+            --surface: #141720;
+            --surface2: #1c2030;
+            --border: #252b3b;
+            --border2: #303748;
+            --accent: #4f8aff;
+            --accent-h: #3a7bf0;
+            --accent2: #38d9a9;
+            --accent3: #f7b731;
+            --text: #e4e8f0;
+            --text2: #b0bcd4;
+            --muted: #7a8399;
+            --danger: #ff5c5c;
+            --shadow: 0 1px 4px rgba(0, 0, 0, .3);
+            --shadow2: 0 4px 20px rgba(0, 0, 0, .5);
+            --gemini-bg: #0e3028;
+            --gemini-fg: #5de8c0;
+            --gemini-bd: #1a6c5e;
+            --claude-bg: #1e1040;
+            --claude-fg: #c2a8ff;
+            --claude-bd: #5a3d9e;
+            --chatgpt-bg: #0e2a1a;
+            --chatgpt-fg: #74e09c;
+            --chatgpt-bd: #2a6048;
+            --code-bg: #090b10;
+            --code-fg: #a6d9a0;
+        }
+
+        /* ══════════════════════════════════════════
+       RESET & BASE
+    ══════════════════════════════════════════ */
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html,
+        body {
+            height: 100%;
+            font-family: 'DM Sans', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            overflow: hidden;
+            transition: background .2s, color .2s;
+        }
+
+        ::-webkit-scrollbar {
+            width: 5px;
+            height: 5px;
+        }
+
+        ::-webkit-scrollbar-track {
             background: transparent;
         }
 
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: #cbd5e1;
+        ::-webkit-scrollbar-thumb {
+            background: var(--border2);
             border-radius: 4px;
         }
 
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-            background: #94a3b8;
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--muted);
+        }
+
+        /* ══════════════════════════════════════════
+       LAYOUT SHELL
+    ══════════════════════════════════════════ */
+        .app {
+            display: flex;
+            flex-direction: column;
+            height: 100dvh;
+        }
+
+        /* ══════════════════════════════════════════
+       HEADER
+    ══════════════════════════════════════════ */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 14px;
+            height: 54px;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+            gap: 8px;
+            z-index: 30;
+            box-shadow: var(--shadow);
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            min-width: 0;
+        }
+
+        .brand-icon {
+            width: 30px;
+            height: 30px;
+            flex-shrink: 0;
+            background: linear-gradient(135deg, var(--accent), #7b5fff);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .brand-icon svg {
+            width: 15px;
+            height: 15px;
+            stroke: #fff;
+            fill: none;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .brand-title {
+            font-family: 'Syne', sans-serif;
+            font-weight: 800;
+            font-size: 15px;
+            letter-spacing: -.3px;
+            white-space: nowrap;
+        }
+
+        .brand-sub {
+            font-size: 10px;
+            color: var(--muted);
+            white-space: nowrap;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            flex-shrink: 0;
+        }
+
+        /* repo badge */
+        .repo-badge {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 3px 9px;
+            font-size: 11px;
+            color: var(--muted);
+        }
+
+        .repo-badge svg {
+            width: 11px;
+            height: 11px;
+            stroke: var(--muted);
+            fill: none;
+            stroke-width: 2;
+        }
+
+        #branch-badge {
+            background: var(--border2);
+            padding: 1px 6px;
+            border-radius: 10px;
+            font-size: 9px;
+            color: var(--text2);
+        }
+
+        /* ══════════════════════════════════════════
+       BUTTONS
+    ══════════════════════════════════════════ */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 6px 11px;
+            border-radius: 7px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all .13s;
+            border: 1px solid transparent;
+            white-space: nowrap;
+            text-decoration: none;
+        }
+
+        .btn svg {
+            width: 13px;
+            height: 13px;
+            flex-shrink: 0;
+            fill: none;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .btn-icon {
+            padding: 6px;
+            width: 30px;
+            height: 30px;
+            justify-content: center;
+        }
+
+        .btn-ghost {
+            background: transparent;
+            border-color: var(--border2);
+            color: var(--muted);
+        }
+
+        .btn-ghost:hover {
+            background: var(--surface2);
+            color: var(--text);
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: #fff;
+            border-color: var(--accent);
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-h);
+            border-color: var(--accent-h);
+        }
+
+        .btn-success {
+            background: var(--accent2);
+            color: #fff;
+        }
+
+        .btn-success:hover {
+            opacity: .9;
+        }
+
+        .btn-success:disabled {
+            background: var(--border2);
+            color: var(--muted);
+            cursor: not-allowed;
+            opacity: 1;
+        }
+
+        .btn-gemini {
+            background: var(--gemini-bg);
+            color: var(--gemini-fg);
+            border-color: var(--gemini-bd);
+        }
+
+        .btn-gemini:hover {
+            opacity: .85;
+        }
+
+        .btn-claude {
+            background: var(--claude-bg);
+            color: var(--claude-fg);
+            border-color: var(--claude-bd);
+        }
+
+        .btn-claude:hover {
+            opacity: .85;
+        }
+
+        .btn-chatgpt {
+            background: var(--chatgpt-bg);
+            color: var(--chatgpt-fg);
+            border-color: var(--chatgpt-bd);
+        }
+
+        .btn-chatgpt:hover {
+            opacity: .85;
+        }
+
+        /* theme toggle */
+        .theme-toggle {
+            position: relative;
+            width: 38px;
+            height: 22px;
+            background: var(--surface2);
+            border: 1px solid var(--border2);
+            border-radius: 11px;
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: background .2s;
+        }
+
+        .theme-toggle-knob {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: var(--accent);
+            transition: transform .2s, background .2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .theme-toggle-knob svg {
+            width: 10px;
+            height: 10px;
+            stroke: #fff;
+            fill: none;
+            stroke-width: 2;
+            stroke-linecap: round;
+        }
+
+        [data-theme="dark"] .theme-toggle-knob {
+            transform: translateX(16px);
+            background: var(--accent3);
+        }
+
+        /* ══════════════════════════════════════════
+       WORKSPACE
+    ══════════════════════════════════════════ */
+        .workspace {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* ══════════════════════════════════════════
+       SIDEBAR
+    ══════════════════════════════════════════ */
+        .sidebar {
+            width: 256px;
+            flex-shrink: 0;
+            background: var(--surface);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            transition: transform .25s ease;
+        }
+
+        .sidebar-search {
+            padding: 10px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+
+        .search-wrap {
+            position: relative;
+        }
+
+        .search-wrap .s-icon {
+            position: absolute;
+            left: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 13px;
+            height: 13px;
+            stroke: var(--muted);
+            fill: none;
+            stroke-width: 2;
+            stroke-linecap: round;
+            pointer-events: none;
+        }
+
+        .search-wrap input {
+            width: 100%;
+            padding: 6px 8px 6px 27px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            color: var(--text);
+            font-size: 12px;
+            outline: none;
+            font-family: inherit;
+            transition: border-color .15s;
+        }
+
+        .search-wrap input:focus {
+            border-color: var(--accent);
+        }
+
+        .search-wrap input::placeholder {
+            color: var(--muted);
+        }
+
+        .file-tree {
+            flex: 1;
+            overflow-y: auto;
+            padding: 6px 4px;
+        }
+
+        .folder-row {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 6px;
+            margin-top: 2px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .08em;
+            color: var(--muted);
+            cursor: pointer;
+            border-radius: 5px;
+            user-select: none;
+        }
+
+        .folder-row:hover {
+            background: var(--surface2);
+            color: var(--text2);
+        }
+
+        .folder-row svg {
+            width: 12px;
+            height: 12px;
+            flex-shrink: 0;
+            stroke: var(--accent3);
+            fill: none;
+            stroke-width: 2;
+            stroke-linejoin: round;
+        }
+
+        .folder-row .chevron {
+            stroke: var(--muted);
+            transition: transform .15s;
+            margin-left: auto;
+        }
+
+        .folder-row.collapsed .chevron {
+            transform: rotate(-90deg);
+        }
+
+        .folder-children {
+            border-left: 1px solid var(--border);
+            margin-left: 12px;
+        }
+
+        .folder-children.collapsed-children {
+            display: none;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            color: var(--text2);
+            transition: all .12s;
+            user-select: none;
+        }
+
+        .file-item .fi-icon {
+            width: 13px;
+            height: 13px;
+            flex-shrink: 0;
+            stroke: var(--muted);
+            fill: none;
+            stroke-width: 2;
+            stroke-linecap: round;
+        }
+
+        .file-item:hover {
+            background: var(--surface2);
+            color: var(--text);
+        }
+
+        .file-item.active {
+            background: rgba(59, 127, 245, .1);
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .file-item.active .fi-icon {
+            stroke: var(--accent);
+        }
+
+        .file-item .fi-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .fi-ext {
+            font-size: 9px;
+            font-weight: 700;
+            padding: 1px 4px;
+            border-radius: 3px;
+            flex-shrink: 0;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* extension badge colors */
+        .ext-md {
+            background: #dbeafe;
+            color: #1d4ed8;
+        }
+
+        .ext-txt {
+            background: #f0fdf4;
+            color: #15803d;
+        }
+
+        .ext-json {
+            background: #fef9c3;
+            color: #92400e;
+        }
+
+        .ext-js {
+            background: #fef9c3;
+            color: #b45309;
+        }
+
+        .ext-ts {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .ext-py {
+            background: #e0f2fe;
+            color: #0369a1;
+        }
+
+        .ext-yaml,
+        .ext-yml {
+            background: #fce7f3;
+            color: #9d174d;
+        }
+
+        .ext-toml {
+            background: #fff7ed;
+            color: #9a3412;
+        }
+
+        .ext-sh {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .ext-html {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .ext-css {
+            background: #ede9fe;
+            color: #6b21a8;
+        }
+
+        .ext-img {
+            background: #fce7f3;
+            color: #be185d;
+        }
+
+        .ext-pdf {
+            background: #fee2e2;
+            color: #b91c1c;
+        }
+
+        .ext-other {
+            background: var(--surface2);
+            color: var(--muted);
+        }
+
+        [data-theme="dark"] .ext-md {
+            background: #1e3a6e;
+            color: #93c5fd;
+        }
+
+        [data-theme="dark"] .ext-txt {
+            background: #14532d;
+            color: #86efac;
+        }
+
+        [data-theme="dark"] .ext-json {
+            background: #422006;
+            color: #fcd34d;
+        }
+
+        [data-theme="dark"] .ext-js {
+            background: #422006;
+            color: #fbbf24;
+        }
+
+        [data-theme="dark"] .ext-ts {
+            background: #1e3a6e;
+            color: #93c5fd;
+        }
+
+        [data-theme="dark"] .ext-py {
+            background: #0c3047;
+            color: #7dd3fc;
+        }
+
+        [data-theme="dark"] .ext-yaml,
+        [data-theme="dark"] .ext-yml {
+            background: #500724;
+            color: #f9a8d4;
+        }
+
+        [data-theme="dark"] .ext-toml {
+            background: #431407;
+            color: #fdba74;
+        }
+
+        [data-theme="dark"] .ext-sh {
+            background: #052e16;
+            color: #4ade80;
+        }
+
+        [data-theme="dark"] .ext-html {
+            background: #450a0a;
+            color: #fca5a5;
+        }
+
+        [data-theme="dark"] .ext-css {
+            background: #2e1065;
+            color: #c4b5fd;
+        }
+
+        [data-theme="dark"] .ext-img {
+            background: #500724;
+            color: #f9a8d4;
+        }
+
+        [data-theme="dark"] .ext-pdf {
+            background: #450a0a;
+            color: #fca5a5;
+        }
+
+        [data-theme="dark"] .ext-other {
+            background: var(--surface2);
+            color: var(--muted);
+        }
+
+        /* ══════════════════════════════════════════
+       MAIN
+    ══════════════════════════════════════════ */
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            min-width: 0;
+        }
+
+        /* Pipeline */
+        .pipeline {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 8px 12px;
+            flex-shrink: 0;
+        }
+
+        .pipeline-label {
+            font-size: 9px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .1em;
+            color: var(--muted);
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .pipeline-label svg {
+            width: 10px;
+            height: 10px;
+            stroke: var(--accent);
+            fill: none;
+            stroke-width: 2;
+        }
+
+        .pipeline-steps {
+            display: flex;
+            gap: 5px;
+            overflow-x: auto;
+            padding-bottom: 2px;
+        }
+
+        .pipeline-steps::-webkit-scrollbar {
+            height: 3px;
+        }
+
+        .step-card {
+            flex-shrink: 0;
+            min-width: 112px;
+            max-width: 145px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 7px 10px;
+            cursor: pointer;
+            transition: all .13s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .step-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 3px;
+            height: 100%;
+            background: var(--border2);
+            transition: background .13s;
+        }
+
+        .step-card:hover {
+            border-color: var(--accent);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow2);
+        }
+
+        .step-card:hover::before {
+            background: var(--accent);
+        }
+
+        .step-num {
+            font-size: 9px;
+            color: var(--muted);
+            font-weight: 700;
+            margin-bottom: 2px;
+        }
+
+        .step-title {
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--text);
+            line-height: 1.3;
+        }
+
+        .step-desc {
+            font-size: 9px;
+            color: var(--muted);
+            margin-top: 1px;
+            line-height: 1.3;
+        }
+
+        /* Viewer toolbar */
+        .viewer-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 7px 12px;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface);
+            flex-shrink: 0;
+            gap: 8px;
+            min-height: 46px;
+        }
+
+        .file-path {
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--muted);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .file-path strong {
+            color: var(--text);
+            font-weight: 600;
+        }
+
+        .toolbar-right {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            flex-shrink: 0;
+        }
+
+        .view-toggle {
+            display: flex;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            padding: 2px;
+            gap: 1px;
+        }
+
+        .view-btn {
+            padding: 3px 9px;
+            border-radius: 5px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            color: var(--muted);
+            transition: all .12s;
+            border: none;
+            background: transparent;
+            font-family: inherit;
+        }
+
+        .view-btn.active {
+            background: var(--accent);
+            color: #fff;
+        }
+
+        /* AI bar */
+        .ai-bar {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 6px 12px;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface);
+            flex-shrink: 0;
+            overflow-x: auto;
+        }
+
+        .ai-bar-label {
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .07em;
+            color: var(--muted);
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .ai-hint {
+            font-size: 10px;
+            color: var(--muted);
+            white-space: nowrap;
+            margin-left: 4px;
+        }
+
+        /* Viewer body */
+        .viewer-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 18px;
+            background: var(--bg);
+        }
+
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            gap: 12px;
+            color: var(--muted);
+            text-align: center;
+            padding: 20px;
+        }
+
+        .empty-icon {
+            width: 54px;
+            height: 54px;
+            background: var(--surface);
+            border: 1px solid var(--border2);
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .empty-icon svg {
+            width: 22px;
+            height: 22px;
+            stroke: var(--border2);
+            fill: none;
+            stroke-width: 1.5;
+        }
+
+        .empty-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text2);
+        }
+
+        .empty-sub {
+            font-size: 12px;
+            color: var(--muted);
+            max-width: 280px;
+            line-height: 1.6;
+        }
+
+        /* Markdown / prose */
+        .prose-view {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 22px;
+            max-width: 860px;
+            margin: 0 auto;
+            box-shadow: var(--shadow);
+        }
+
+        .prose-view h1,
+        .prose-view h2,
+        .prose-view h3,
+        .prose-view h4 {
+            font-family: 'Syne', sans-serif;
+            font-weight: 700;
+            color: var(--text);
+            margin: 18px 0 8px;
+        }
+
+        .prose-view h1 {
+            font-size: 21px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 8px;
+            margin-top: 0;
+        }
+
+        .prose-view h2 {
+            font-size: 16px;
+        }
+
+        .prose-view h3 {
+            font-size: 14px;
+            color: var(--text2);
+        }
+
+        .prose-view p {
+            font-size: 13px;
+            line-height: 1.8;
+            color: var(--text2);
+            margin-bottom: 10px;
+        }
+
+        .prose-view ul,
+        .prose-view ol {
+            padding-left: 20px;
+            margin-bottom: 10px;
+        }
+
+        .prose-view li {
+            font-size: 13px;
+            color: var(--text2);
+            line-height: 1.7;
+            margin-bottom: 3px;
+        }
+
+        .prose-view code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 1px 5px;
+            color: var(--accent);
+        }
+
+        .prose-view pre {
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px;
+            overflow-x: auto;
+            margin: 12px 0;
+        }
+
+        .prose-view pre code {
+            background: none;
+            border: none;
+            padding: 0;
+            font-size: 12px;
+            color: var(--code-fg);
+        }
+
+        .prose-view blockquote {
+            border-left: 3px solid var(--accent);
+            margin-left: 0;
+            padding-left: 14px;
+            color: var(--muted);
+            font-style: italic;
+        }
+
+        .prose-view table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 12px 0;
+            font-size: 12px;
+        }
+
+        .prose-view th {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            padding: 7px 10px;
+            text-align: left;
+            font-weight: 600;
+        }
+
+        .prose-view td {
+            border: 1px solid var(--border);
+            padding: 6px 10px;
+            color: var(--text2);
+        }
+
+        .prose-view hr {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 16px 0;
+        }
+
+        .prose-view a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .prose-view a:hover {
+            text-decoration: underline;
+        }
+
+        .prose-view img {
+            max-width: 100%;
+            border-radius: 6px;
+        }
+
+        /* Raw / code view */
+        .raw-view {
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 18px;
+            max-width: 860px;
+            margin: 0 auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--code-fg);
+            line-height: 1.7;
+            white-space: pre-wrap;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+        }
+
+        /* Image view */
+        .img-view {
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            max-width: 860px;
+            margin: 0 auto;
+        }
+
+        .img-view img {
+            max-width: 100%;
+            border-radius: 10px;
+            box-shadow: var(--shadow2);
+            border: 1px solid var(--border);
+        }
+
+        /* Binary fallback */
+        .binary-view {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 30px;
+            max-width: 500px;
+            margin: 0 auto;
+            text-align: center;
+        }
+
+        .binary-view svg {
+            width: 40px;
+            height: 40px;
+            stroke: var(--muted);
+            margin-bottom: 12px;
+            fill: none;
+            stroke-width: 1.5;
+        }
+
+        .binary-view h4 {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text2);
+            margin-bottom: 6px;
+        }
+
+        .binary-view p {
+            font-size: 12px;
+            color: var(--muted);
+            line-height: 1.6;
+        }
+
+        .binary-view a {
+            color: var(--accent);
+            font-size: 12px;
+            font-weight: 600;
+            text-decoration: none;
+            display: inline-block;
+            margin-top: 10px;
+        }
+
+        /* ══════════════════════════════════════════
+       SETTINGS MODAL
+    ══════════════════════════════════════════ */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, .5);
+            backdrop-filter: blur(4px);
+            z-index: 50;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+        }
+
+        .modal-overlay.hidden {
+            display: none;
+        }
+
+        .modal {
+            background: var(--surface);
+            border: 1px solid var(--border2);
+            border-radius: 14px;
+            width: 100%;
+            max-width: 420px;
+            overflow: hidden;
+            box-shadow: var(--shadow2);
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 13px 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .modal-header h3 {
+            font-size: 14px;
+            font-weight: 700;
+        }
+
+        .modal-body {
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 13px;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .08em;
+            color: var(--muted);
+            margin-bottom: 5px;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 7px 10px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            color: var(--text);
+            font-size: 13px;
+            outline: none;
+            font-family: 'JetBrains Mono', monospace;
+            transition: border-color .15s;
+        }
+
+        .form-input:focus {
+            border-color: var(--accent);
+        }
+
+        .form-hint {
+            font-size: 11px;
+            color: var(--muted);
+            line-height: 1.5;
+        }
+
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 7px;
+            padding: 13px 16px;
+            border-top: 1px solid var(--border);
+        }
+
+        /* ══════════════════════════════════════════
+       MOBILE / RESPONSIVE
+    ══════════════════════════════════════════ */
+        .sidebar-backdrop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, .45);
+            z-index: 20;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity .25s;
+        }
+
+        .mobile-fab {
+            display: none;
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            z-index: 25;
+        }
+
+        .fab-btn {
+            width: 46px;
+            height: 46px;
+            border-radius: 50%;
+            background: var(--accent);
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 16px rgba(59, 127, 245, .4);
+            transition: transform .13s;
+        }
+
+        .fab-btn:active {
+            transform: scale(.93);
+        }
+
+        .fab-btn svg {
+            width: 18px;
+            height: 18px;
+            stroke: #fff;
+            fill: none;
+            stroke-width: 2;
+            stroke-linecap: round;
+        }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                top: 0;
+                left: 0;
+                height: 100dvh;
+                z-index: 25;
+                transform: translateX(-100%);
+                width: 280px;
+                border-right: 1px solid var(--border2);
+                box-shadow: 4px 0 30px rgba(0, 0, 0, .3);
+            }
+
+            .sidebar.open {
+                transform: translateX(0);
+            }
+
+            .sidebar-backdrop {
+                display: block;
+            }
+
+            .sidebar-backdrop.open {
+                opacity: 1;
+                pointer-events: all;
+            }
+
+            .mobile-fab {
+                display: flex;
+            }
+
+            .repo-badge {
+                display: none !important;
+            }
+
+            .brand-sub {
+                display: none;
+            }
+
+            .btn-label-hide {
+                display: none;
+            }
+
+            .viewer-toolbar {
+                flex-wrap: wrap;
+                padding: 7px 10px;
+            }
+
+            .file-path {
+                width: 100%;
+                flex: none;
+                order: -1;
+            }
+
+            .toolbar-right {
+                width: 100%;
+                justify-content: space-between;
+            }
+
+            .pipeline {
+                padding: 7px 10px;
+            }
+
+            .step-card {
+                min-width: 95px;
+            }
+
+            .viewer-body {
+                padding: 10px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .ai-hint {
+                display: none;
+            }
+
+            .step-title {
+                font-size: 10px;
+            }
+        }
+
+        /* ══════════════════════════════════════════
+       UTILITIES
+    ══════════════════════════════════════════ */
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .spin {
+            animation: spin 1s linear infinite;
+        }
+
+        .loading-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            gap: 10px;
+            color: var(--muted);
+        }
+
+        .loading-state svg {
+            width: 20px;
+            height: 20px;
+            stroke: var(--accent);
+            fill: none;
+            stroke-width: 2;
+        }
+
+        .loading-state span {
+            font-size: 12px;
+        }
+
+        .toast {
+            position: fixed;
+            top: 62px;
+            right: 14px;
+            background: var(--accent2);
+            color: #fff;
+            padding: 9px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 700;
+            z-index: 100;
+            transform: translateY(-8px);
+            opacity: 0;
+            transition: all .2s;
+            pointer-events: none;
+        }
+
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .hidden {
+            display: none !important;
         }
     </style>
 </head>
 
-<body class="bg-slate-50 text-slate-800 flex flex-col h-screen overflow-hidden">
+<body>
 
-    <!-- Top Navigation Header -->
-    <header
-        class="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between flex-shrink-0 z-10 shadow-sm">
-        <div class="flex items-center space-x-3">
-            <div class="bg-blue-600 text-white p-2 rounded-lg">
-                <i data-lucide="stethoscope" class="w-6 h-6"></i>
-            </div>
-            <div>
-                <h1 class="text-lg font-bold text-slate-900">Medical Skill Pipeline</h1>
-                <p class="text-xs text-slate-500">Repository Viewer & Code Copier</p>
-            </div>
-        </div>
+    <div class="toast" id="toast">✓ คัดลอกสำเร็จ!</div>
 
-        <div class="flex items-center space-x-4">
-            <!-- Repo Indicator -->
-            <div
-                class="hidden md:flex items-center bg-slate-100 rounded-full px-3 py-1 text-xs text-slate-600 space-x-1.5 border border-slate-200">
-                <i data-lucide="github" class="w-3.5 h-3.5"></i>
-                <span class="font-medium">panascha/SKILL</span>
-                <span id="branch-badge"
-                    class="bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded text-[10px]">main</span>
-            </div>
+    <div class="app">
 
-            <!-- Settings Button -->
-            <button onclick="toggleSettingsModal()"
-                class="flex items-center space-x-1 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-sm transition-colors">
-                <i data-lucide="settings" class="w-4 h-4"></i>
-                <span>ตั้งค่า API</span>
-            </button>
-
-            <!-- Global Refresh -->
-            <button onclick="fetchRepository()"
-                class="flex items-center space-x-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm transition-colors shadow-sm">
-                <i data-lucide="refresh-cw" class="w-4 h-4" id="refresh-icon"></i>
-                <span>ซิงค์ข้อมูลใหม่</span>
-            </button>
-        </div>
-    </header>
-
-    <!-- Main Workspace -->
-    <div class="flex flex-1 overflow-hidden">
-
-        <!-- Sidebar - File Tree & Directory Browser -->
-        <aside class="w-80 bg-white border-r border-slate-200 flex flex-col flex-shrink-0">
-            <!-- Filter Section -->
-            <div class="p-4 border-b border-slate-100">
-                <div class="relative">
-                    <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <i data-lucide="search" class="w-4 h-4 text-slate-400"></i>
-                    </span>
-                    <input type="text" id="file-search" oninput="filterFiles()" placeholder="ค้นหาไฟล์ในคลังระบบ..."
-                        class="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all">
+        <!-- HEADER -->
+        <header class="header">
+            <div class="header-brand">
+                <button class="btn btn-icon btn-ghost" id="menu-btn" style="display:none" onclick="toggleSidebar()"
+                    aria-label="เมนู">
+                    <svg viewBox="0 0 24 24">
+                        <line x1="3" y1="6" x2="21" y2="6" />
+                        <line x1="3" y1="12" x2="21" y2="12" />
+                        <line x1="3" y1="18" x2="21" y2="18" />
+                    </svg>
+                </button>
+                <div class="brand-icon">
+                    <svg viewBox="0 0 24 24">
+                        <path
+                            d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18" />
+                    </svg>
+                </div>
+                <div>
+                    <div class="brand-title">SKILL Viewer</div>
+                    <div class="brand-sub">panascha/SKILL</div>
                 </div>
             </div>
 
-            <!-- File Tree Display -->
-            <div class="flex-1 overflow-y-auto p-4 custom-scrollbar" id="file-tree-container">
-                <div class="flex flex-col items-center justify-center h-full text-slate-400 space-y-2">
-                    <i data-lucide="loader-2" class="w-6 h-6 animate-spin text-blue-500"></i>
-                    <span class="text-xs">กำลังสแกนโครงสร้าง Repository...</span>
+            <div class="header-actions">
+                <div class="repo-badge">
+                    <svg viewBox="0 0 24 24">
+                        <path
+                            d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44 0 00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22" />
+                    </svg>
+                    panascha/SKILL
+                    <span id="branch-badge">main</span>
                 </div>
+
+                <a href="https://aistudio.google.com/prompts/new_chat" target="_blank" class="btn btn-gemini"
+                    title="Google AI Studio">
+                    <svg viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="3" />
+                        <path
+                            d="M12 2v4M12 18v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M2 12h4M18 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83" />
+                    </svg>
+                    <span class="btn-label-hide">Gemini</span>
+                </a>
+                <a href="https://claude.ai/new" target="_blank" class="btn btn-claude" title="Claude">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" />
+                        <path d="M8 12h8M12 8v8" />
+                    </svg>
+                    <span class="btn-label-hide">Claude</span>
+                </a>
+                <a href="https://chatgpt.com/" target="_blank" class="btn btn-chatgpt" title="ChatGPT">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+                    </svg>
+                    <span class="btn-label-hide">ChatGPT</span>
+                </a>
+
+                <!-- Theme toggle -->
+                <button class="theme-toggle" onclick="toggleTheme()" title="สลับธีม" aria-label="สลับธีม">
+                    <div class="theme-toggle-knob" id="theme-knob">
+                        <!-- sun icon (light mode) -->
+                        <svg id="theme-icon-sun" viewBox="0 0 24 24">
+                            <circle cx="12" cy="12" r="5" />
+                            <path
+                                d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+                        </svg>
+                        <!-- moon icon (dark mode) -->
+                        <svg id="theme-icon-moon" viewBox="0 0 24 24" style="display:none">
+                            <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
+                        </svg>
+                    </div>
+                </button>
+
+                <button onclick="toggleSettingsModal()" class="btn btn-ghost" title="ตั้งค่า">
+                    <svg viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="3" />
+                        <path
+                            d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
+                    </svg>
+                    <span class="btn-label-hide">ตั้งค่า</span>
+                </button>
+
+                <button onclick="fetchRepository()" class="btn btn-primary" title="ซิงค์">
+                    <svg id="refresh-icon" viewBox="0 0 24 24">
+                        <polyline points="23 4 23 10 17 10" />
+                        <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10" />
+                    </svg>
+                    <span class="btn-label-hide">ซิงค์</span>
+                </button>
             </div>
-        </aside>
+        </header>
 
-        <!-- Right Pane - Main Workspace Layout (Vertical Stack) -->
-        <main class="flex-1 flex flex-col overflow-hidden">
+        <!-- WORKSPACE -->
+        <div class="workspace">
 
-            <!-- Section A: Pipeline Visualizer (Top horizontal display) -->
-            <section class="bg-slate-100 border-b border-slate-200 p-4 overflow-x-auto flex-shrink-0">
-                <div class="max-w-7xl mx-auto">
-                    <h3
-                        class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center space-x-1">
-                        <i data-lucide="milestone" class="w-3.5 h-3.5"></i>
-                        <span>Master Pipeline: ลำดับขั้นตอนการใช้เครื่องมือ</span>
-                    </h3>
+            <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="closeSidebar()"></div>
 
-                    <div class="flex items-stretch justify-between space-x-3 min-w-[900px]">
-                        <!-- Step 1 -->
-                        <div onclick="selectPipelineStep('med/slide-to-markdown.md')"
-                            class="flex-1 bg-white hover:border-blue-400 border border-slate-200 rounded-xl p-3.5 cursor-pointer shadow-sm hover:shadow transition-all relative overflow-hidden group">
-                            <div
-                                class="absolute top-0 left-0 w-1.5 h-full bg-slate-300 group-hover:bg-blue-500 transition-colors">
-                            </div>
-                            <div class="pl-2">
-                                <span class="text-[10px] font-bold text-slate-400">ขั้นตอนที่ 1</span>
-                                <h4 class="text-sm font-bold text-slate-800">1. แปลงไฟล์</h4>
-                                <p class="text-[11px] text-slate-500 mt-0.5">Lecture.pdf → notes-raw.md</p>
-                                <div class="text-[10px] text-blue-600 font-medium mt-1.5 flex items-center">
-                                    <span>slide-to-markdown</span>
-                                    <i data-lucide="chevron-right" class="w-3 h-3 ml-0.5"></i>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="flex items-center justify-center text-slate-400"><i data-lucide="arrow-right"
-                                class="w-4 h-4"></i></div>
-
-                        <!-- Step 2 -->
-                        <div onclick="selectPipelineStep('med/lecture-synthesizer.md')"
-                            class="flex-1 bg-white hover:border-blue-400 border border-slate-200 rounded-xl p-3.5 cursor-pointer shadow-sm hover:shadow transition-all relative overflow-hidden group">
-                            <div
-                                class="absolute top-0 left-0 w-1.5 h-full bg-slate-300 group-hover:bg-blue-500 transition-colors">
-                            </div>
-                            <div class="pl-2">
-                                <span class="text-[10px] font-bold text-slate-400">ขั้นตอนที่ 2</span>
-                                <h4 class="text-sm font-bold text-slate-800">2. รวมเสียงบรรยาย</h4>
-                                <p class="text-[11px] text-slate-500 mt-0.5">Raw Notes + Transcript</p>
-                                <div class="text-[10px] text-blue-600 font-medium mt-1.5 flex items-center">
-                                    <span>lecture-synthesizer</span>
-                                    <i data-lucide="chevron-right" class="w-3 h-3 ml-0.5"></i>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="flex items-center justify-center text-slate-400"><i data-lucide="arrow-right"
-                                class="w-4 h-4"></i></div>
-
-                        <!-- Step 3 -->
-                        <div onclick="selectPipelineStep('med/slide-enrich.md')"
-                            class="flex-1 bg-white hover:border-blue-400 border border-slate-200 rounded-xl p-3.5 cursor-pointer shadow-sm hover:shadow transition-all relative overflow-hidden group">
-                            <div
-                                class="absolute top-0 left-0 w-1.5 h-full bg-slate-300 group-hover:bg-blue-500 transition-colors">
-                            </div>
-                            <div class="pl-2">
-                                <span class="text-[10px] font-bold text-slate-400">ขั้นตอนที่ 3</span>
-                                <h4 class="text-sm font-bold text-slate-800">3. เสริมความรู้</h4>
-                                <p class="text-[11px] text-slate-500 mt-0.5">notes-synthesized → enriched</p>
-                                <div class="text-[10px] text-blue-600 font-medium mt-1.5 flex items-center">
-                                    <span>slide-enrich</span>
-                                    <i data-lucide="chevron-right" class="w-3 h-3 ml-0.5"></i>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="flex items-center justify-center text-slate-400"><i data-lucide="arrow-right"
-                                class="w-4 h-4"></i></div>
-
-                        <!-- Step 4 -->
-                        <div onclick="selectPipelineStep('med/curriculum-tracker.md')"
-                            class="flex-1 bg-white hover:border-blue-400 border border-slate-200 rounded-xl p-3.5 cursor-pointer shadow-sm hover:shadow transition-all relative overflow-hidden group">
-                            <div
-                                class="absolute top-0 left-0 w-1.5 h-full bg-slate-300 group-hover:bg-blue-500 transition-colors">
-                            </div>
-                            <div class="pl-2">
-                                <span class="text-[10px] font-bold text-slate-400">ขั้นตอนที่ 4</span>
-                                <h4 class="text-sm font-bold text-slate-800">4. ตรวจสอบความซ้ำ</h4>
-                                <p class="text-[11px] text-slate-500 mt-0.5">ตรวจ Overlap กับบทอื่น</p>
-                                <div class="text-[10px] text-blue-600 font-medium mt-1.5 flex items-center">
-                                    <span>curriculum-tracker</span>
-                                    <i data-lucide="chevron-right" class="w-3 h-3 ml-0.5"></i>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="flex items-center justify-center text-slate-400"><i data-lucide="arrow-right"
-                                class="w-4 h-4"></i></div>
-
-                        <!-- Step 5 -->
-                        <div onclick="selectPipelineStep('med/lecture-crystallizer.md')"
-                            class="flex-1 bg-white hover:border-blue-400 border border-slate-200 rounded-xl p-3.5 cursor-pointer shadow-sm hover:shadow transition-all relative overflow-hidden group">
-                            <div
-                                class="absolute top-0 left-0 w-1.5 h-full bg-slate-300 group-hover:bg-blue-500 transition-colors">
-                            </div>
-                            <div class="pl-2">
-                                <span class="text-[10px] font-bold text-slate-400">ขั้นตอนที่ 5</span>
-                                <h4 class="text-sm font-bold text-slate-800">5. ตกผลึกเนื้อหา</h4>
-                                <p class="text-[11px] text-slate-500 mt-0.5">ตกผลึกเป็นแนวจำ / Mnemonic</p>
-                                <div class="text-[10px] text-blue-600 font-medium mt-1.5 flex items-center">
-                                    <span>lecture-crystallizer</span>
-                                    <i data-lucide="chevron-right" class="w-3 h-3 ml-0.5"></i>
-                                </div>
-                            </div>
-                        </div>
+            <!-- SIDEBAR -->
+            <aside class="sidebar" id="sidebar">
+                <div class="sidebar-search">
+                    <div class="search-wrap">
+                        <svg class="s-icon" viewBox="0 0 24 24">
+                            <circle cx="11" cy="11" r="8" />
+                            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                        </svg>
+                        <input type="text" id="file-search" placeholder="ค้นหาไฟล์..." oninput="filterFiles()">
                     </div>
                 </div>
-            </section>
-
-            <!-- Section B: File Contents Viewer -->
-            <section class="flex-1 flex flex-col overflow-hidden bg-white">
-                <!-- Viewer Control Toolbar -->
-                <div class="border-b border-slate-200 px-6 py-3 flex items-center justify-between flex-shrink-0">
-                    <div class="flex items-center space-x-2 overflow-hidden">
-                        <i data-lucide="file-text" class="w-5 h-5 text-slate-400 flex-shrink-0"></i>
-                        <span id="current-file-path"
-                            class="text-sm font-medium text-slate-700 truncate">กรุณาเลือกไฟล์ที่ต้องการแสดงข้อมูล</span>
+                <div class="file-tree" id="file-tree-container">
+                    <div class="loading-state">
+                        <svg class="spin" viewBox="0 0 24 24">
+                            <path
+                                d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+                        </svg>
+                        <span>กำลังโหลด...</span>
                     </div>
+                </div>
+            </aside>
 
-                    <div class="flex items-center space-x-3">
-                        <!-- View mode toggler -->
-                        <div class="bg-slate-100 rounded-lg p-0.5 flex space-x-1 border border-slate-200 text-xs">
-                            <button onclick="setViewMode('rendered')" id="btn-view-rendered"
-                                class="px-3 py-1 rounded-md font-medium transition-all bg-white text-slate-800 shadow-sm">
-                                รูปแบบแสดงผล (Markdown)
-                            </button>
-                            <button onclick="setViewMode('raw')" id="btn-view-raw"
-                                class="px-3 py-1 rounded-md font-medium transition-all text-slate-600 hover:text-slate-900">
-                                ซอร์สโค้ดดิบ
-                            </button>
+            <!-- MAIN -->
+            <main class="main">
+
+                <!-- Pipeline strip -->
+                <div class="pipeline">
+                    <div class="pipeline-label">
+                        <svg viewBox="0 0 24 24">
+                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                        </svg>
+                        Master Pipeline
+                    </div>
+                    <div class="pipeline-steps" id="pipeline-steps"></div>
+                </div>
+
+                <!-- Viewer toolbar -->
+                <div class="viewer-toolbar">
+                    <div class="file-path" id="current-file-path">เลือกไฟล์จากเมนูซ้าย</div>
+                    <div class="toolbar-right">
+                        <div class="view-toggle" id="view-toggle-wrap">
+                            <button class="view-btn active" id="btn-view-rendered"
+                                onclick="setViewMode('rendered')">Preview</button>
+                            <button class="view-btn" id="btn-view-raw" onclick="setViewMode('raw')">Raw</button>
                         </div>
-
-                        <!-- Copy Button -->
-                        <button id="btn-copy" onclick="copyCurrentFileContent()" disabled
-                            class="flex items-center space-x-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-md text-sm font-medium transition-colors shadow-sm cursor-pointer disabled:cursor-not-allowed">
-                            <i data-lucide="copy" class="w-4 h-4"></i>
-                            <span id="copy-text">คัดลอกไฟล์นี้</span>
+                        <button id="btn-copy" onclick="copyCurrentFileContent()" disabled class="btn btn-success">
+                            <svg viewBox="0 0 24 24">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                            </svg>
+                            <span id="copy-text">คัดลอก</span>
                         </button>
                     </div>
                 </div>
 
-                <!-- Main Viewer Area -->
-                <div class="flex-1 overflow-y-auto p-8 custom-scrollbar bg-slate-50" id="viewer-container">
-                    <!-- Default Landing Message -->
-                    <div id="viewer-empty-state"
-                        class="flex flex-col items-center justify-center h-full text-slate-400 space-y-3">
-                        <div class="bg-white p-4 rounded-full border border-slate-200 shadow-sm">
-                            <i data-lucide="file-code-2" class="w-8 h-8 text-slate-300"></i>
-                        </div>
-                        <div class="text-center max-w-sm">
-                            <p class="text-sm font-medium text-slate-600">ยังไม่ได้เลือกเอกสาร</p>
-                            <p class="text-xs text-slate-400 mt-1">คลิกเลือกไฟล์ Markdown จากเมนูด้านซ้ายมือ
-                                หรือคลิกขั้นตอน Master Pipeline ด้านบนเพื่อเริ่มโหลดแบบร่างสกิล</p>
-                        </div>
-                    </div>
-
-                    <!-- Markdown Rendered Destination -->
-                    <div id="viewer-rendered"
-                        class="prose max-w-none prose-slate hidden bg-white p-8 rounded-xl border border-slate-200 shadow-sm">
-                    </div>
-
-                    <!-- Raw Code Area -->
-                    <pre id="viewer-raw"
-                        class="text-xs text-slate-800 bg-slate-900 text-slate-100 p-6 rounded-xl overflow-x-auto border border-slate-800 font-mono hidden max-w-none shadow-sm"></pre>
+                <!-- AI bar -->
+                <div class="ai-bar">
+                    <span class="ai-bar-label">เปิดใน AI:</span>
+                    <a href="https://aistudio.google.com/prompts/new_chat" target="_blank" class="btn btn-gemini"
+                        style="font-size:11px;padding:5px 9px;">
+                        <svg viewBox="0 0 24 24" style="width:12px;height:12px;">
+                            <circle cx="12" cy="12" r="3" />
+                            <path
+                                d="M12 2v4M12 18v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M2 12h4M18 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83" />
+                        </svg>
+                        Google AI Studio
+                    </a>
+                    <a href="https://claude.ai/new" target="_blank" class="btn btn-claude"
+                        style="font-size:11px;padding:5px 9px;">
+                        <svg viewBox="0 0 24 24" style="width:12px;height:12px;">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" />
+                            <path d="M8 12h8M12 8v8" />
+                        </svg>
+                        Claude
+                    </a>
+                    <a href="https://chatgpt.com/" target="_blank" class="btn btn-chatgpt"
+                        style="font-size:11px;padding:5px 9px;">
+                        <svg viewBox="0 0 24 24" style="width:12px;height:12px;">
+                            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+                        </svg>
+                        ChatGPT
+                    </a>
+                    <span class="ai-hint">— คัดลอก SKILL แล้ววางในช่องพิมพ์</span>
                 </div>
-            </section>
-        </main>
+
+                <!-- Viewer body -->
+                <div class="viewer-body" id="viewer-container">
+                    <div id="viewer-empty-state" class="empty-state">
+                        <div class="empty-icon">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                                <polyline points="14 2 14 8 20 8" />
+                            </svg>
+                        </div>
+                        <div class="empty-title">ยังไม่ได้เลือกไฟล์</div>
+                        <div class="empty-sub">คลิกไฟล์จากเมนูซ้าย หรือเลือกขั้นตอนใน Pipeline ด้านบน</div>
+                    </div>
+                    <div id="viewer-rendered" class="prose-view" style="display:none;"></div>
+                    <pre id="viewer-raw" class="raw-view" style="display:none;"></pre>
+                </div>
+
+            </main>
+        </div>
     </div>
 
-    <!-- Optional API Configuration Modal -->
-    <div id="settings-modal"
-        class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center hidden">
-        <div class="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-md overflow-hidden">
-            <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-                <div class="flex items-center space-x-2">
-                    <i data-lucide="settings" class="w-5 h-5 text-slate-500"></i>
-                    <h3 class="font-bold text-slate-800">ตั้งค่าการเชื่อมต่อ API</h3>
-                </div>
-                <button onclick="toggleSettingsModal()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x"
-                        class="w-5 h-5"></i></button>
+    <!-- Mobile FAB -->
+    <div class="mobile-fab">
+        <button class="fab-btn" onclick="toggleSidebar()" aria-label="เมนู">
+            <svg viewBox="0 0 24 24">
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
+        </button>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay hidden" id="settings-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>ตั้งค่าการเชื่อมต่อ API</h3>
+                <button onclick="toggleSettingsModal()" class="btn btn-ghost btn-icon">
+                    <svg viewBox="0 0 24 24">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                </button>
             </div>
-            <div class="p-6 space-y-4">
-                <p class="text-xs text-slate-500 leading-relaxed">
-                    หน้าเว็บนี้เข้าใช้ข้อมูล GitHub API สาธารณะ หากคุณใช้งานถี่จนติดข้อจำกัดด้านความเร็ว (Rate Limit)
-                    หรือต้องการดึงข้อมูลจากส่วนตัว โปรดกรอกข้อมูล Access Token เพื่อปลดเกณฑ์ข้อกำหนดได้ที่ช่องนี้
-                </p>
+            <div class="modal-body">
+                <p class="form-hint">หากติด Rate Limit ของ GitHub API สาธารณะ ให้กรอก Personal Access Token
+                    เพื่อปลดข้อจำกัด</p>
                 <div>
-                    <label class="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">GitHub
-                        Personal Access Token (PAT)</label>
-                    <input type="password" id="api-token" placeholder="ghp_xxxxxxxxxxxx"
-                        class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <label class="form-label" for="api-token">GitHub Personal Access Token</label>
+                    <input type="password" id="api-token" class="form-input" placeholder="ghp_xxxxxxxxxxxx">
                 </div>
                 <div>
-                    <label
-                        class="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">Branch</label>
-                    <input type="text" id="api-branch" placeholder="main" value="main"
-                        class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <label class="form-label" for="api-branch">Branch</label>
+                    <input type="text" id="api-branch" class="form-input" placeholder="main" value="main">
                 </div>
             </div>
-            <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end space-x-2">
-                <button onclick="toggleSettingsModal()"
-                    class="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-xs font-medium transition-colors">ยกเลิก</button>
-                <button onclick="saveSettings()"
-                    class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors">บันทึกตั้งค่า</button>
+            <div class="modal-footer">
+                <button onclick="toggleSettingsModal()" class="btn btn-ghost">ยกเลิก</button>
+                <button onclick="saveSettings()" class="btn btn-primary">บันทึกและซิงค์</button>
             </div>
         </div>
     </div>
 
-    <!-- Client-side Application Logic -->
     <script>
-        // Repository configurations
+        /* ════════════════════════════════════════
+           CONFIG
+        ════════════════════════════════════════ */
         const REPO_OWNER = 'panascha';
         const REPO_NAME = 'SKILL';
 
+        const PIPELINE_STEPS = [
+            { num: 1, title: 'แปลงไฟล์', desc: 'PDF → Markdown', path: 'med/slide-to-markdown.md' },
+            { num: 2, title: 'รวมเสียงบรรยาย', desc: 'Notes + Transcript', path: 'med/lecture-synthesizer.md' },
+            { num: 3, title: 'เสริมความรู้', desc: 'Synthesized → Enriched', path: 'med/slide-enrich.md' },
+            { num: 4, title: 'ตรวจสอบซ้ำ', desc: 'ตรวจ Overlap', path: 'med/curriculum-tracker.md' },
+            { num: 5, title: 'ตกผลึก', desc: 'Mnemonic / แนวจำ', path: 'med/lecture-crystallizer.md' },
+        ];
+
+        // File type classification
+        const EXT_MAP = {
+            md: 'md', txt: 'txt', json: 'json', js: 'js', jsx: 'js', ts: 'ts', tsx: 'ts',
+            py: 'py', yaml: 'yaml', yml: 'yml', toml: 'toml', sh: 'sh', bash: 'sh',
+            html: 'html', htm: 'html', css: 'css', scss: 'css', less: 'css',
+            png: 'img', jpg: 'img', jpeg: 'img', gif: 'img', svg: 'img', webp: 'img', ico: 'img',
+            pdf: 'pdf',
+        };
+        const TEXT_EXTS = new Set(['md', 'txt', 'json', 'js', 'jsx', 'ts', 'tsx', 'py', 'yaml', 'yml', 'toml', 'sh', 'bash', 'html', 'htm', 'css', 'scss', 'less', 'xml', 'csv', 'ini', 'cfg', 'env', 'gitignore', 'dockerfile', 'makefile', 'rs', 'go', 'java', 'kt', 'rb', 'php', 'swift', 'c', 'cpp', 'h', 'hpp', 'cs', 'lua', 'r', 'sql', 'graphql', 'gql', 'proto', 'tf', 'hcl']);
+        const IMG_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico']);
+
+        function getExt(name) {
+            const parts = name.split('.');
+            return parts.length > 1 ? parts.pop().toLowerCase() : '';
+        }
+        function getExtClass(ext) {
+            const k = EXT_MAP[ext] || 'other';
+            return `ext-${k}`;
+        }
+        function isTextFile(ext) { return TEXT_EXTS.has(ext); }
+        function isImageFile(ext) { return IMG_EXTS.has(ext); }
+        function isMarkdown(ext) { return ext === 'md'; }
+
+        /* ════════════════════════════════════════
+           STATE
+        ════════════════════════════════════════ */
         let rawTreeData = [];
         let selectedFilePath = '';
         let selectedFileContent = '';
-        let currentViewMode = 'rendered'; // 'rendered' | 'raw'
+        let selectedFileRawUrl = '';
+        let currentViewMode = 'rendered';
 
-        // Settings loaded from local storage
         let gitToken = localStorage.getItem('skill_viewer_token') || '';
         let gitBranch = localStorage.getItem('skill_viewer_branch') || 'main';
 
-        // Initialize App
-        document.addEventListener("DOMContentLoaded", () => {
+        /* ════════════════════════════════════════
+           THEME
+        ════════════════════════════════════════ */
+        let isDark = localStorage.getItem('skill_theme') === 'dark';
+
+        function applyTheme() {
+            document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+            document.getElementById('theme-icon-sun').style.display = isDark ? 'none' : '';
+            document.getElementById('theme-icon-moon').style.display = isDark ? '' : 'none';
+        }
+
+        function toggleTheme() {
+            isDark = !isDark;
+            localStorage.setItem('skill_theme', isDark ? 'dark' : 'light');
+            applyTheme();
+        }
+
+        /* ════════════════════════════════════════
+           INIT
+        ════════════════════════════════════════ */
+        document.addEventListener('DOMContentLoaded', () => {
+            applyTheme();
             document.getElementById('api-token').value = gitToken;
             document.getElementById('api-branch').value = gitBranch;
-            document.getElementById('branch-badge').innerText = gitBranch;
-
-            lucide.createIcons();
+            document.getElementById('branch-badge').textContent = gitBranch;
+            renderPipeline();
+            detectMobile();
             fetchRepository();
         });
 
-        // Set Headers with optional GitHub PAT
-        function getFetchHeaders() {
-            const headers = {
-                'Accept': 'application/vnd.github.v3+json'
-            };
-            if (gitToken) {
-                headers['Authorization'] = `token ${gitToken}`;
-            }
-            return headers;
+        window.addEventListener('resize', detectMobile);
+
+        function detectMobile() {
+            const m = window.innerWidth < 768;
+            document.getElementById('menu-btn').style.display = m ? 'inline-flex' : 'none';
         }
 
-        // Fetch directory structure from Github recursively
+        /* ════════════════════════════════════════
+           PIPELINE
+        ════════════════════════════════════════ */
+        function renderPipeline() {
+            document.getElementById('pipeline-steps').innerHTML = PIPELINE_STEPS.map(s => `
+    <div class="step-card" onclick="loadFileContent('${s.path}')">
+      <div class="step-num">STEP ${s.num}</div>
+      <div class="step-title">${s.title}</div>
+      <div class="step-desc">${s.desc}</div>
+    </div>`).join('');
+        }
+
+        /* ════════════════════════════════════════
+           SIDEBAR MOBILE
+        ════════════════════════════════════════ */
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('open');
+            document.getElementById('sidebar-backdrop').classList.toggle('open');
+        }
+        function closeSidebar() {
+            document.getElementById('sidebar').classList.remove('open');
+            document.getElementById('sidebar-backdrop').classList.remove('open');
+        }
+
+        /* ════════════════════════════════════════
+           GITHUB API
+        ════════════════════════════════════════ */
+        function getFetchHeaders() {
+            const h = { 'Accept': 'application/vnd.github.v3+json' };
+            if (gitToken) h['Authorization'] = `token ${gitToken}`;
+            return h;
+        }
+
         async function fetchRepository() {
-            const refreshIcon = document.getElementById('refresh-icon');
-            refreshIcon.classList.add('animate-spin');
-
-            const fileTreeContainer = document.getElementById('file-tree-container');
-            fileTreeContainer.innerHTML = `
-                <div class="flex flex-col items-center justify-center h-full text-slate-400 space-y-2">
-                    <i data-lucide="loader-2" class="w-6 h-6 animate-spin text-blue-500"></i>
-                    <span class="text-xs">กำลังติดต่อ GitHub API...</span>
-                </div>
-            `;
-            lucide.createIcons();
-
+            const icon = document.getElementById('refresh-icon');
+            icon.classList.add('spin');
+            document.getElementById('file-tree-container').innerHTML = `
+    <div class="loading-state">
+      <svg class="spin" viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+      <span>กำลังติดต่อ GitHub...</span>
+    </div>`;
             try {
-                // Request recursive tree representation
                 const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/git/trees/${gitBranch}?recursive=1`;
-                const response = await fetch(url, { headers: getFetchHeaders() });
-
-                if (!response.ok) {
-                    throw new Error(`Error: ${response.status} (${response.statusText})`);
-                }
-
-                const data = await response.json();
-                rawTreeData = data.tree.filter(item => item.type === 'blob'); // extract only files
+                const res = await fetch(url, { headers: getFetchHeaders() });
+                if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+                const data = await res.json();
+                rawTreeData = data.tree.filter(i => i.type === 'blob');
                 renderTreeUI(rawTreeData);
             } catch (err) {
-                fileTreeContainer.innerHTML = `
-                    <div class="text-center p-4">
-                        <i data-lucide="alert-circle" class="w-8 h-8 text-rose-500 mx-auto mb-2"></i>
-                        <h4 class="text-sm font-semibold text-slate-700">ล้มเหลวในการเชื่อมต่อ</h4>
-                        <p class="text-xs text-slate-400 mt-1 leading-relaxed">${err.message}</p>
-                        <p class="text-[11px] text-slate-500 mt-3 leading-relaxed">กรณีเกินขีดจำกัดเชื่อมต่อสาธารณะของ GitHub (Rate Limit) แนะนำให้ลงทะเบียน "Token" ผ่านหน้าต่างตั้งค่า API</p>
-                    </div>
-                `;
-                lucide.createIcons();
+                document.getElementById('file-tree-container').innerHTML = `
+      <div style="text-align:center;padding:16px;">
+        <div style="font-size:12px;color:var(--danger);margin-bottom:6px;">⚠ ไม่สามารถเชื่อมต่อได้</div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.6;">${err.message}<br><br>หากติด Rate Limit ให้ตั้งค่า Token ในหน้าต่างตั้งค่า</div>
+      </div>`;
             } finally {
-                refreshIcon.classList.remove('animate-spin');
+                icon.classList.remove('spin');
             }
         }
 
-        // Render File Tree list inside sidebar
+        /* ════════════════════════════════════════
+           FILE TREE RENDER  (all file types)
+        ════════════════════════════════════════ */
         function renderTreeUI(items) {
             const container = document.getElementById('file-tree-container');
-            if (items.length === 0) {
-                container.innerHTML = `<p class="text-center text-xs text-slate-400 py-4">ไม่พบข้อมูลไฟล์ในกิ่งก้านนี้</p>`;
+            if (!items.length) {
+                container.innerHTML = `<div style="text-align:center;padding:16px;font-size:12px;color:var(--muted);">ไม่พบไฟล์</div>`;
                 return;
             }
 
-            // Arrange folders and files
-            let html = '<div class="space-y-1">';
-
-            // Build hierarchical layout representation dynamically
-            const fileMap = {};
+            // Build nested tree object
+            const tree = {};
             items.forEach(item => {
                 const parts = item.path.split('/');
-                let cur = fileMap;
-                parts.forEach((part, idx) => {
-                    if (!cur[part]) {
-                        cur[part] = idx === parts.length - 1 ? { _file: item } : {};
-                    }
-                    cur = cur[part];
+                let cur = tree;
+                parts.forEach((p, i) => {
+                    if (!cur[p]) cur[p] = (i === parts.length - 1) ? { _file: item } : { _dir: true };
+                    cur = cur[p];
                 });
             });
 
-            // Convert nested directory structure to HTML string
+            // SVG snippets
+            const iconFile = (ext) => {
+                if (isImageFile(ext)) return `<svg class="fi-icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`;
+                if (ext === 'pdf') return `<svg class="fi-icon" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`;
+                return `<svg class="fi-icon" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+            };
+            const iconFolder = `<svg viewBox="0 0 24 24" style="width:12px;height:12px;stroke:var(--accent3);fill:none;stroke-width:2;stroke-linejoin:round;flex-shrink:0"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>`;
+            const iconChevron = `<svg class="chevron" viewBox="0 0 24 24" style="width:11px;height:11px;stroke:var(--muted);fill:none;stroke-width:2;stroke-linecap:round;flex-shrink:0"><polyline points="6 9 12 15 18 9"/></svg>`;
+
+            let idCounter = 0;
             function renderNode(node, name, depth = 0) {
-                const isFile = node.hasOwnProperty('_file');
-                const path = isFile ? node._file.path : name;
-                const paddingLeft = depth * 12 + 4;
-
-                if (isFile) {
-                    if (!path.endsWith('.md')) return ''; // only focus on markdown files
-                    const isSelected = selectedFilePath === path;
-                    return `
-                        <div onclick="loadFileContent('${path}')" class="flex items-center space-x-2 py-1.5 px-3 rounded-lg cursor-pointer transition-all ${isSelected ? 'bg-blue-50 text-blue-700 font-medium' : 'hover:bg-slate-50 text-slate-600 hover:text-slate-900'}" style="padding-left: ${paddingLeft}px">
-                            <i data-lucide="file-text" class="w-4 h-4 text-slate-400 flex-shrink-0"></i>
-                            <span class="text-xs truncate" title="${name}">${name}</span>
-                        </div>
-                    `;
-                } else {
-                    let childrenHtml = '';
-                    for (const key in node) {
-                        childrenHtml += renderNode(node[key], key, depth + 1);
-                    }
-                    if (!childrenHtml) return ''; // ignore empty folders
-                    return `
-                        <div class="space-y-0.5">
-                            <div class="flex items-center space-x-2 py-1.5 px-2 text-slate-400 select-none" style="padding-left: ${paddingLeft}px">
-                                <i data-lucide="folder" class="w-4 h-4 flex-shrink-0"></i>
-                                <span class="text-xs font-semibold uppercase tracking-wider text-slate-500">${name}</span>
-                            </div>
-                            <div class="space-y-0.5 border-l border-slate-100 ml-3.5 pl-1">
-                                ${childrenHtml}
-                            </div>
-                        </div>
-                    `;
+                if (node._file) {
+                    const path = node._file.path;
+                    const ext = getExt(name);
+                    const extCls = getExtClass(ext);
+                    const isActive = selectedFilePath === path;
+                    const label = ext ? ext.toUpperCase() : '?';
+                    return `<div onclick="selectFile('${path}')" class="file-item${isActive ? ' active' : ''}" style="padding-left:${depth * 13 + 8}px" title="${path}">
+        ${iconFile(ext)}
+        <span class="fi-name">${name}</span>
+        <span class="fi-ext ${extCls}">${label}</span>
+      </div>`;
                 }
+
+                // It's a folder
+                const folderId = `folder-${idCounter++}`;
+                let childHtml = '';
+                for (const key in node) {
+                    if (key === '_dir') continue;
+                    childHtml += renderNode(node[key], key, depth + 1);
+                }
+                if (!childHtml) return '';
+                return `<div>
+      <div class="folder-row" onclick="toggleFolder('${folderId}')" style="padding-left:${depth * 13 + 4}px">
+        ${iconFolder}
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span>
+        ${iconChevron}
+      </div>
+      <div id="${folderId}" class="folder-children">
+        ${childHtml}
+      </div>
+    </div>`;
             }
 
-            for (const key in fileMap) {
-                html += renderNode(fileMap[key], key);
-            }
-            html += '</div>';
-
+            let html = '';
+            for (const key in tree) html += renderNode(tree[key], key);
             container.innerHTML = html;
-            lucide.createIcons();
         }
 
-        // Filter files via local search input
+        function toggleFolder(id) {
+            const el = document.getElementById(id);
+            const row = el.previousElementSibling;
+            el.classList.toggle('collapsed-children');
+            row.classList.toggle('collapsed');
+        }
+
         function filterFiles() {
-            const query = document.getElementById('file-search').value.toLowerCase();
-            const filtered = rawTreeData.filter(item => item.path.toLowerCase().includes(query));
-            renderTreeUI(filtered);
+            const q = document.getElementById('file-search').value.toLowerCase();
+            renderTreeUI(q ? rawTreeData.filter(i => i.path.toLowerCase().includes(q)) : rawTreeData);
         }
 
-        // Fetch file details and code block contents
+        function selectFile(path) {
+            loadFileContent(path);
+            if (window.innerWidth < 768) closeSidebar();
+        }
+
+        /* ════════════════════════════════════════
+           LOAD & DISPLAY FILE
+        ════════════════════════════════════════ */
         async function loadFileContent(path) {
             selectedFilePath = path;
-
-            // Re-render tree structure to apply active selection state visual
+            selectedFileContent = '';
+            selectedFileRawUrl = '';
             renderTreeUI(rawTreeData);
 
-            document.getElementById('current-file-path').innerHTML = `
-                <span class="text-slate-400">Loading...</span>
-            `;
+            const ext = getExt(path.split('/').pop());
+            document.getElementById('current-file-path').innerHTML =
+                `<span style="opacity:.6">panascha/SKILL/</span><strong>${path}</strong>`;
 
-            const viewerContainer = document.getElementById('viewer-container');
-            const emptyState = document.getElementById('viewer-empty-state');
-            emptyState.classList.add('hidden');
+            const container = document.getElementById('viewer-container');
+            container.innerHTML = `<div class="loading-state">
+    <svg class="spin" viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+    <span>กำลังโหลดไฟล์...</span>
+  </div>`;
+
+            // Show/hide view toggle based on file type
+            const toggleWrap = document.getElementById('view-toggle-wrap');
+            toggleWrap.style.display = (isTextFile(ext) || isMarkdown(ext)) ? '' : 'none';
 
             try {
-                // To fetch raw file directly through API (bypassing Base64 limit/errors)
-                const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${path}?ref=${gitBranch}`;
-                const response = await fetch(url, {
-                    headers: {
-                        ...getFetchHeaders(),
-                        'Accept': 'application/vnd.github.v3.raw' // Returns raw text file
-                    }
-                });
-
-                if (!response.ok) {
-                    throw new Error(`Error: ${response.status} (${response.statusText})`);
+                if (isImageFile(ext)) {
+                    // For images, use raw URL directly
+                    const rawUrl = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${gitBranch}/${path}`;
+                    selectedFileRawUrl = rawUrl;
+                    container.innerHTML = `
+        <div id="viewer-empty-state" style="display:none"></div>
+        <div id="viewer-rendered" class="img-view"><img src="${rawUrl}" alt="${path}" loading="lazy"></div>
+        <pre id="viewer-raw" class="raw-view" style="display:none"></pre>`;
+                    document.getElementById('btn-copy').disabled = true;
+                    document.getElementById('copy-text').textContent = 'คัดลอก';
+                    return;
                 }
 
-                const content = await response.text();
-                selectedFileContent = content;
+                if (!isTextFile(ext)) {
+                    // Binary / unknown: show download link
+                    const dlUrl = `https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${gitBranch}/${path}`;
+                    container.innerHTML = `
+        <div id="viewer-empty-state" style="display:none"></div>
+        <div id="viewer-rendered" class="binary-view">
+          <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <h4>ไม่สามารถแสดงผลไฟล์ประเภทนี้ได้</h4>
+          <p>ไฟล์ชนิด <code style="font-family:JetBrains Mono,monospace;font-size:11px;background:var(--surface2);padding:1px 5px;border-radius:3px">.${ext || 'unknown'}</code> ไม่รองรับการแสดงตัวอย่าง</p>
+          <a href="${dlUrl}" target="_blank">⬇ ดาวน์โหลดไฟล์</a>
+        </div>
+        <pre id="viewer-raw" style="display:none"></pre>`;
+                    document.getElementById('btn-copy').disabled = true;
+                    return;
+                }
 
-                // Show file path in toolbar
-                document.getElementById('current-file-path').innerHTML = `
-                    <span class="text-slate-400 font-normal">panascha/SKILL/</span><span class="font-bold text-slate-800">${path}</span>
-                `;
+                // Text-based file — fetch raw content
+                const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${path}?ref=${gitBranch}`;
+                const res = await fetch(url, {
+                    headers: { ...getFetchHeaders(), 'Accept': 'application/vnd.github.v3.raw' }
+                });
+                if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+                selectedFileContent = await res.text();
 
-                // Render views
+                container.innerHTML = `
+      <div id="viewer-empty-state" style="display:none"></div>
+      <div id="viewer-rendered" class="prose-view" style="display:none"></div>
+      <pre id="viewer-raw" class="raw-view" style="display:none"></pre>`;
+
                 renderViewer();
-
-                // Enable actions
-                document.getElementById('btn-copy').removeAttribute('disabled');
+                document.getElementById('btn-copy').disabled = false;
             } catch (err) {
-                document.getElementById('current-file-path').innerText = 'ล้มเหลวในการดาวน์โหลดไฟล์';
-                viewerContainer.innerHTML = `
-                    <div class="text-center p-8 bg-white border border-slate-200 rounded-xl max-w-md mx-auto mt-12 shadow-sm">
-                        <i data-lucide="x-circle" class="w-10 h-10 text-rose-500 mx-auto mb-3"></i>
-                        <h4 class="font-bold text-slate-800">ล้มเหลวในการเรียกข้อมูลไฟล์</h4>
-                        <p class="text-xs text-slate-500 mt-2 leading-relaxed">${err.message}</p>
-                    </div>
-                `;
-                lucide.createIcons();
+                container.innerHTML = `<div style="text-align:center;padding:40px 16px;">
+      <div style="font-size:13px;color:var(--danger);margin-bottom:8px;">ไม่สามารถโหลดไฟล์ได้</div>
+      <div style="font-size:12px;color:var(--muted);">${err.message}</div>
+    </div>`;
             }
         }
 
-        // Handle Pipeline Quick Link
-        function selectPipelineStep(path) {
-            loadFileContent(path);
-        }
-
-        // Refresh views based on current toggle state
         function renderViewer() {
-            const renderDiv = document.getElementById('viewer-rendered');
-            const rawPre = document.getElementById('viewer-raw');
+            const rendered = document.getElementById('viewer-rendered');
+            const raw = document.getElementById('viewer-raw');
+            const ext = getExt(selectedFilePath.split('/').pop());
 
-            if (currentViewMode === 'rendered') {
-                renderDiv.classList.remove('hidden');
-                rawPre.classList.add('hidden');
-
-                // Convert md representation using Marked.js
-                renderDiv.innerHTML = marked.parse(selectedFileContent);
+            if (currentViewMode === 'rendered' && isMarkdown(ext)) {
+                rendered.innerHTML = marked.parse(selectedFileContent);
+                rendered.style.display = 'block';
+                raw.style.display = 'none';
             } else {
-                renderDiv.classList.add('hidden');
-                rawPre.classList.remove('hidden');
-                rawPre.textContent = selectedFileContent;
+                // raw mode, or non-md text file always shows raw
+                raw.textContent = selectedFileContent;
+                raw.style.display = 'block';
+                rendered.style.display = 'none';
             }
         }
 
-        // Toggle View Mode Options
         function setViewMode(mode) {
             currentViewMode = mode;
-
-            const rBtn = document.getElementById('btn-view-rendered');
-            const rawBtn = document.getElementById('btn-view-raw');
-
-            if (mode === 'rendered') {
-                rBtn.className = 'px-3 py-1 rounded-md font-medium transition-all bg-white text-slate-800 shadow-sm';
-                rawBtn.className = 'px-3 py-1 rounded-md font-medium transition-all text-slate-600 hover:text-slate-900';
-            } else {
-                rBtn.className = 'px-3 py-1 rounded-md font-medium transition-all text-slate-600 hover:text-slate-900';
-                rawBtn.className = 'px-3 py-1 rounded-md font-medium transition-all bg-white text-slate-800 shadow-sm';
-            }
-
-            if (selectedFileContent) {
-                renderViewer();
-            }
+            document.getElementById('btn-view-rendered').classList.toggle('active', mode === 'rendered');
+            document.getElementById('btn-view-raw').classList.toggle('active', mode === 'raw');
+            if (selectedFileContent) renderViewer();
         }
 
-        // Copy content directly to device clipboard
+        /* ════════════════════════════════════════
+           COPY
+        ════════════════════════════════════════ */
         function copyCurrentFileContent() {
             if (!selectedFileContent) return;
-
             navigator.clipboard.writeText(selectedFileContent).then(() => {
-                const btnCopy = document.getElementById('btn-copy');
-                const copyText = document.getElementById('copy-text');
-
-                // Visual feedback of success state
-                btnCopy.classList.remove('bg-emerald-600', 'hover:bg-emerald-700');
-                btnCopy.classList.add('bg-blue-600', 'hover:bg-blue-700');
-                copyText.innerText = 'คัดลอกสำเร็จแล้ว!';
-
-                setTimeout(() => {
-                    btnCopy.classList.remove('bg-blue-600', 'hover:bg-blue-700');
-                    btnCopy.classList.add('bg-emerald-600', 'hover:bg-emerald-700');
-                    copyText.innerText = 'คัดลอกไฟล์นี้';
-                }, 2000);
-            }).catch(err => {
-                alert('ไม่สามารถคัดลอกข้อมูลได้โดยอัตโนมัติ: ' + err);
-            });
+                showToast();
+                const txt = document.getElementById('copy-text');
+                txt.textContent = 'คัดลอกแล้ว!';
+                setTimeout(() => { txt.textContent = 'คัดลอก'; }, 2000);
+            }).catch(err => alert('ไม่สามารถคัดลอกได้: ' + err));
         }
 
-        // Manage Settings Modal
+        function showToast() {
+            const t = document.getElementById('toast');
+            t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), 2200);
+        }
+
+        /* ════════════════════════════════════════
+           SETTINGS MODAL
+        ════════════════════════════════════════ */
         function toggleSettingsModal() {
-            const modal = document.getElementById('settings-modal');
-            modal.classList.toggle('hidden');
+            document.getElementById('settings-modal').classList.toggle('hidden');
         }
-
         function saveSettings() {
             gitToken = document.getElementById('api-token').value.trim();
             gitBranch = document.getElementById('api-branch').value.trim() || 'main';
-
             localStorage.setItem('skill_viewer_token', gitToken);
             localStorage.setItem('skill_viewer_branch', gitBranch);
-
-            document.getElementById('branch-badge').innerText = gitBranch;
+            document.getElementById('branch-badge').textContent = gitBranch;
             toggleSettingsModal();
             fetchRepository();
         }
