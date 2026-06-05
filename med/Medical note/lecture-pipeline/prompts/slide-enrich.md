@@ -8,8 +8,10 @@ description: |
   - พูดถึง "slide-enrich" โดยตรง
   - บอกว่าต้องการ "สิ่งที่ต้องรู้", "กลไก", "mechanism", "pathophysiology" จาก notes ที่มีอยู่แล้ว
   - ต้องการตรวจสอบความถูกต้องของ notes กับ guidelines หรือแหล่งอ้างอิงทางการแพทย์
+  - ส่ง notes ที่มี LaTeX syntax ($...$, $$...$$) แล้วบอกว่า "แปลง LaTeX", "แก้ให้ Notion อ่านได้", "clean math", หรือ notes มี pattern เช่น $O_2$, $\frac{}{}$, \uparrow, $$...$$ — ให้รัน LaTeX cleaner ก่อน enrich เสมอ
   ห้าม undertrigger: ถ้า user มี notes จาก slide และต้องการเพิ่ม clinical context ให้ใช้ skill นี้เสมอ
-  รับ input เป็นไฟล์ notes-raw.md หรือ Markdown text, output เป็น notes-enriched.md
+  ถ้า notes มี LaTeX ให้ clean ก่อน enrich เสมอ แม้ user จะไม่ได้พูดถึง LaTeX โดยตรง
+  รับ input เป็นไฟล์ notes-raw.md หรือ Markdown text, output เป็น notes-enriched.md (และ notes-clean.md ถ้ามี LaTeX)
 ---
 
 # Slide-Enrich
@@ -23,6 +25,51 @@ description: |
 3. `‼️ ข้อมูลที่อาจไม่ตรงกับสไลด์` (ต้องใช้ web search)
 
 ไม่แตะต้องเนื้อหาเดิมจาก `notes-raw.md` — เพิ่มเติมเท่านั้น ห้ามแก้ไขหรือตัดทอน
+
+---
+
+## Pre-processing: LaTeX Auto-Clean
+
+**ก่อน enrich ทุกครั้ง** ให้ scan หา LaTeX expressions ใน input ก่อน:
+
+```
+Pattern ที่ต้องตรวจจับ:
+  $...$   $$...$$   \frac   \uparrow   \downarrow   \rightarrow
+  ^{...}  _{...}    \alpha  \beta      \geq          \leq   \pm   \times
+```
+
+**ถ้าพบ LaTeX → รัน LaTeX Cleaner ก่อนเสมอ** (อย่า enrich จาก raw LaTeX):
+
+1. แปลง `$...$` / `$$...$$` ทุกตัวเป็น Unicode หรือ plain text โดยใช้ตาราง conversion ด้านล่าง
+2. บันทึก intermediate ไว้ใน `notes-clean.md` (present_files ให้ user ด้วย)
+3. ใช้ `notes-clean.md` เป็น input สำหรับ enrichment pipeline ต่อไป
+
+**ถ้าไม่พบ LaTeX** → ข้าม step นี้ เริ่ม enrich ได้เลย
+
+### ตาราง LaTeX → Unicode/Plain
+
+| LaTeX | แปลงเป็น | | LaTeX | แปลงเป็น |
+|---|---|---|---|---|
+| `$O_2$` | `O₂` | | `$CO_2$` | `CO₂` |
+| `$H_2O$` | `H₂O` | | `$x^2$` | `x²` |
+| `$x^3$` | `x³` | | `$10^6$` | `10⁶` |
+| `$Fe^{2+}$` | `Fe²⁺` | | `$CO_2^{2-}$` | `CO₂²⁻` |
+| `$2^{\text{nd}}$` | `2nd` | | `$1^{\text{st}}$` | `1st` |
+| `\uparrow` | `↑` | | `\downarrow` | `↓` |
+| `\rightarrow` | `→` | | `\leftarrow` | `←` |
+| `\pm` | `±` | | `\times` | `×` |
+| `\geq` | `≥` | | `\leq` | `≤` |
+| `\neq` | `≠` | | `\approx` | `≈` |
+| `\alpha` | `α` | | `\beta` | `β` |
+| `\Delta` | `Δ` | | `\mu` | `μ` |
+| `\frac{a}{b}` | `a/b` | | `\frac{1}{2}` | `½` |
+| `\frac{3}{4}` | `¾` | | `\frac{1}{4}` | `¼` |
+| `$$...$$` (block) | plain text inline | | `\text{...}` | ข้อความใน `{}` เท่านั้น |
+
+**Superscript map:** `0=⁰ 1=¹ 2=² 3=³ 4=⁴ 5=⁵ 6=⁶ 7=⁷ 8=⁸ 9=⁹ n=ⁿ +=⁺ -=⁻`  
+**Subscript map:** `0=₀ 1=₁ 2=₂ 3=₃ 4=₄ 5=₅ 6=₆ 7=₇ 8=₈ 9=₉`
+
+ถ้า LaTeX expression ใดแปลงไม่ได้ → ใส่ `[?]` กำกับไว้ แล้ว note แจ้ง user ท้ายไฟล์
 
 ---
 
@@ -109,14 +156,19 @@ description: |
 ## ขั้นตอนการทำงาน
 
 1. **รับ input** — อ่านไฟล์ notes-raw.md หรือ Markdown ที่ user ส่งมา
-2. **นับ sections** — ระบุจำนวน section ทั้งหมดที่ต้องทำให้ user ทราบ
-3. **ทำทีละ section** — สำหรับแต่ละ section:
+2. **Scan LaTeX** — ตรวจหา `$...$`, `$$...$$`, `\frac`, `\uparrow` และ pattern อื่นๆ
+   - **พบ LaTeX** → รัน LaTeX Cleaner (ดู Pre-processing section) → บันทึก `notes-clean.md` → ใช้ clean version เป็น input ต่อไป
+   - **ไม่พบ** → ข้ามไป step 3 ได้เลย
+3. **นับ sections** — ระบุจำนวน section ทั้งหมดที่ต้องทำให้ user ทราบ
+4. **ทำทีละ section** — สำหรับแต่ละ section:
    - อ่าน `### เนื้อหาจากสไลด์`
    - web search เพื่อตรวจสอบและหาข้อมูลกลไก
    - เขียน `🧠 กลไก` → `📌 สิ่งที่ต้องรู้` → `‼️ ตรวจสอบ`
-4. **รักษาโครงสร้างเดิม** — copy เนื้อหาจาก notes-raw.md ครบถ้วน ไม่ตัดไม่แก้
-5. **อัปเดต Checklist** — ถ้า notes-raw.md มี checklist ให้ update สถานะเป็น ✅ เมื่อ enrich แล้ว
-6. **ส่งไฟล์** ด้วย present_files โดยตั้งชื่อว่า `notes-enriched.md`
+5. **รักษาโครงสร้างเดิม** — copy เนื้อหาจาก notes-raw.md ครบถ้วน ไม่ตัดไม่แก้
+6. **อัปเดต Checklist** — ถ้า notes-raw.md มี checklist ให้ update สถานะเป็น ✅ เมื่อ enrich แล้ว
+7. **ส่งไฟล์** ด้วย present_files:
+   - ถ้ามี LaTeX clean step → ส่ง `notes-clean.md` + `notes-enriched.md`
+   - ถ้าไม่มี → ส่ง `notes-enriched.md` เท่านั้น
 
 ---
 
@@ -128,3 +180,5 @@ description: |
 - ❌ ห้ามเขียน `🧠 กลไก` แบบ list ข้อเท็จจริงโดยไม่มีบริบท
 - ❌ ห้ามข้าม section ใดโดยไม่เพิ่ม 3 subsections ครบ
 - ❌ ห้าม skip web search — ทุก topic ต้องตรวจสอบ
+- ❌ ห้าม enrich โดยยังมี LaTeX (`$...$`, `$$...$$`) ค้างอยู่ใน output — ต้อง clean ก่อนเสมอ
+- ❌ ห้ามลบ `[?]` marker โดยไม่แจ้ง user ว่า LaTeX ตัวนั้นแปลงไม่ได้
