@@ -2156,7 +2156,18 @@ async function applyCourse() {
     if (d.subject_code) {
       document.getElementById('subjectTitle').value = d.subject_code;
     }
-    if (d.subgroup === 'LEC' && d.topics && d.topics.length) {
+    if (d.subgroup === 'MAPPED' && Array.isArray(d.topics) && d.topics.length && typeof d.topics[0] === 'object') {
+      let prompt = 'รายชื่อหัวข้อบรรยายพร้อมกลุ่มวิชา (Lecture Topics with Subgroup mapping):\n';
+      d.topics.forEach((t, i) => { prompt += `${i + 1}. [${t.subgroup}] ${t.topic}\n`; });
+      prompt += '\nคำสั่งพิเศษ:\n';
+      prompt += `- SubjectCode = ${d.subject_code}\n`;
+      prompt += `- category[0] = ${d.subject_code}_<ExamGroup>\n`;
+      prompt += `- category[1] = ${d.subject_code}_<SubGroupSuffix>_<TopicLabel>\n`;
+      prompt += '  โดย <SubGroupSuffix> ต้องตรงกับกลุ่มวิชาในวงเล็บ [...] ของ topic นั้น (ตามรายการด้านบน)\n';
+      prompt += '  และ <TopicLabel> ต้องตรงกับชื่อ lecture ทุกตัวอักษร\n';
+      prompt += '- ถ้าข้อสอบไม่ตรงกับ lecture ใดเลย ให้ใช้ topic ที่ใกล้เคียงที่สุดจากรายการ';
+      document.getElementById('additionalPrompt').value = prompt;
+    } else if (d.subgroup === 'LEC' && d.topics && d.topics.length) {
       let prompt = 'รายชื่อหัวข้อบรรยาย (Lecture Topics) สำหรับการ assign category[1]:\n';
       d.topics.forEach((t, i) => { prompt += `${i + 1}. ${t}\n`; });
       prompt += '\nคำสั่งพิเศษ:\n';

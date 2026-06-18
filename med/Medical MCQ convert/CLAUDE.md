@@ -56,6 +56,15 @@ Place input PDFs in `input_pdfs/`. Outputs land in `output/<filename_stem>/`.
 
 The UI reads these via `/api/courses` to populate a topic-list dropdown, letting users attach structured topic metadata to a conversion run via `subject_title`.
 
+Three `subgroup` modes control how `additional_prompt` is auto-built:
+
+| `subgroup` value | `topics` field | Behaviour |
+|---|---|---|
+| `"MAPPED"` | Array of `{"subgroup": "ANA", "topic": "..."}` | Each topic pre-assigned to discipline; Gemini uses exact mapping |
+| `"LEC"` | Flat string array | All questions use `_LEC_<TopicLabel>`; subgroup inferred by keyword |
+| `["ANA", "BIOCHEM", ...]` | Omitted | Gemini auto-classifies by keyword from the discipline list |
+| `"PATHO"` (single string) | Omitted | Same as above, scoped to one discipline |
+
 ## Key data flows
 
 1. User POSTs to `/api/run` → spawns background thread calling `run_conversion()`
@@ -106,3 +115,21 @@ Words `BY`, `AI`, `BY_AI` are always stripped from category IDs.
 ## Cumulative output
 
 `quizdata.js` is read at the start of each batch run and **merged** (not overwritten) — new questions are appended to existing category arrays. Deduplication is by `problem` text exact match.
+
+## Post-processing utility
+
+`organize_output.py` groups output folders by whether any question has `"img": "require_img"`:
+
+```bash
+python organize_output.py               # all folders
+python organize_output.py CVS PHYSIO    # partial-name filter
+```
+
+Folders with ≥1 `require_img` question are moved to `output/require_img/<stem>/`; folders with none stay in `output/<stem>/`. Also moves folders *back out* of `require_img/` if their questions no longer need images (e.g. after re-conversion). Run after each batch to keep the output directory organized.
+
+## Skill commands
+
+`.claude/skills/` contains two project-specific skills:
+
+- **`/convert-medical`** — guided end-to-end conversion: checks server is running, builds `additional_prompt` from a course preset, calls `/api/run`, monitors progress, verifies categories.
+- **`/create-course`** — parses a KKU Moodle page (paste Ctrl+A output) to extract lecture topics and writes a `courses/*.json` preset file.

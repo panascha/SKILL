@@ -36,7 +36,23 @@ Start-Sleep -Seconds 3
 
 ## Step 3 — Build additional_prompt
 
-If subgroup = `LEC` and topics are provided (or loaded from course config), build:
+**MAPPED** (course preset has `"subgroup": "MAPPED"` and `topics` = array of `{subgroup, topic}` objects):
+```
+รายชื่อหัวข้อบรรยายพร้อมกลุ่มวิชา (Lecture Topics with Subgroup mapping):
+1. [ANA] Gross Anatomy of Mediastinum
+2. [PHYSIO] Electrical activity of the heart
+...
+
+คำสั่งพิเศษ:
+- SubjectCode = <SUBJECT_CODE>
+- category[0] = <SUBJECT_CODE>_<ExamGroup>
+- category[1] = <SUBJECT_CODE>_<SubGroupSuffix>_<TopicLabel>
+  โดย <SubGroupSuffix> ต้องตรงกับกลุ่มวิชาในวงเล็บ [...] ของ topic นั้น
+  และ <TopicLabel> ต้องตรงกับชื่อ lecture ทุกตัวอักษร
+- ถ้าข้อสอบไม่ตรงกับ lecture ใดเลย ให้ใช้ topic ที่ใกล้เคียงที่สุดจากรายการ
+```
+
+**LEC** (`"subgroup": "LEC"`, flat topic list):
 ```
 รายชื่อหัวข้อบรรยาย (Lecture Topics) สำหรับการ assign category[1]:
 1. <topic1>
@@ -51,7 +67,7 @@ If subgroup = `LEC` and topics are provided (or loaded from course config), buil
 - ถ้าข้อสอบไม่ตรงกับ lecture ใดเลย ให้ใช้ topic ที่ใกล้เคียงที่สุดจากรายการ
 ```
 
-If subgroup = discipline (not LEC): leave additional_prompt empty; the system derives subgroup from keywords automatically.
+**Discipline** (`"subgroup"` = string or array, no MAPPED): leave additional_prompt empty; system derives subgroup from keywords automatically.
 
 ## Step 4 — Fire conversion job
 
