@@ -41,8 +41,7 @@ Pattern ที่ต้องตรวจจับ:
 **ถ้าพบ LaTeX → รัน LaTeX Cleaner ก่อนเสมอ** (อย่า enrich จาก raw LaTeX):
 
 1. แปลง `$...$` / `$$...$$` ทุกตัวเป็น Unicode หรือ plain text โดยใช้ตาราง conversion ด้านล่าง
-2. บันทึก intermediate ไว้ใน `notes-clean.md` (present_files ให้ user ด้วย)
-3. ใช้ `notes-clean.md` เป็น input สำหรับ enrichment pipeline ต่อไป
+2. ใช้ `notes-clean.md` เป็น input สำหรับ enrichment pipeline ต่อไป
 
 **ถ้าไม่พบ LaTeX** → ข้าม step นี้ เริ่ม enrich ได้เลย
 
@@ -167,8 +166,7 @@ Pattern ที่ต้องตรวจจับ:
 5. **รักษาโครงสร้างเดิม** — copy เนื้อหาจาก notes-raw.md ครบถ้วน ไม่ตัดไม่แก้
 6. **อัปเดต Checklist** — ถ้า notes-raw.md มี checklist ให้ update สถานะเป็น ✅ เมื่อ enrich แล้ว
 7. **ส่งไฟล์** ด้วย present_files:
-   - ถ้ามี LaTeX clean step → ส่ง `notes-clean.md` + `notes-enriched.md`
-   - ถ้าไม่มี → ส่ง `notes-enriched.md` เท่านั้น
+   - ส่ง `notes-enriched.md` เท่านั้น
 
 ---
 

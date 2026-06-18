@@ -70,36 +70,33 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 **Send only what changed. Two parts per section: original then replacement. Review before sending.**
 
-When returning code changes, split every changed section into exactly two parts:
+When returning code changes, split every changed section into exactly two parts.
 
-**Part 1 — Original:** the exact block from the source file that will be replaced (full coverage, no trimming).
-**Part 2 — Replacement:** the new code that replaces it in full, ready to paste.
+### Output Format — Use Artifact with Copy Buttons
 
-Use this structure for each changed section:
+Always render ORIGINAL and REPLACEMENT with two separate code blocks, each with its own copy button. output plain markdown code fences for code changes.
+
+Structure per changed section:
 
 ```
-// Section: <function/block name or location>
-
-// ORIGINAL
-<exact existing code — complete, nothing omitted>
-
-// REPLACEMENT
-<new code — complete, ready to paste in place of the original>
+Section: <function/block name or location>
 ```
 
-Rules:
+Then render containing:
+- **ORIGINAL block** — exact code from the source file, with a "Copy Original"
+- **REPLACEMENT block** — new code ready to paste, with a "Copy Replacement"
+
+### Rules
+
 - Both parts must cover the same scope — same start line, same end line.
-- Never show a partial original (e.g., "..." or trimmed context). Full block only.
+- Never show a partial original (no `...` or trimmed context). Full block only.
 - One section per logical change. If two functions change, two sections.
 - Do not include unchanged code outside the section boundaries.
 
-Before sending:
-- Re-read your own output once. Does it do what was asked? Nothing more?
-- Can someone find the ORIGINAL in the file and paste the REPLACEMENT over it without guessing?
-- If not, expand the section boundary until the answer is yes.
+### Self-review checklist before every code reply
 
-**Self-review checklist before every code reply:**
 1. Is this the minimal change that solves the problem?
 2. Does each ORIGINAL block match exactly what's in the file?
 3. Does each REPLACEMENT fully cover the same scope as the ORIGINAL?
 4. Did I re-read it once after writing?
+5. Are ORIGINAL and REPLACEMENT in separate copy-able blocks in the artifact?

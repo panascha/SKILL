@@ -3,10 +3,11 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SKILL Viewer</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
         href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&display=swap"
         rel="stylesheet">
@@ -233,6 +234,7 @@
             border: 1px solid transparent;
             white-space: nowrap;
             text-decoration: none;
+            touch-action: manipulation;
         }
 
         .btn svg {
@@ -331,6 +333,7 @@
             cursor: pointer;
             flex-shrink: 0;
             transition: background .2s;
+            touch-action: manipulation;
         }
 
         .theme-toggle-knob {
@@ -448,6 +451,8 @@
             cursor: pointer;
             border-radius: 5px;
             user-select: none;
+            touch-action: manipulation;
+            min-height: 36px;
         }
 
         .folder-row:hover {
@@ -495,6 +500,8 @@
             color: var(--text2);
             transition: all .12s;
             user-select: none;
+            touch-action: manipulation;
+            min-height: 36px;
         }
 
         .file-item .fi-icon {
@@ -744,6 +751,7 @@
             transition: all .13s;
             position: relative;
             overflow: hidden;
+            touch-action: manipulation;
         }
 
         .step-card::before {
@@ -844,6 +852,7 @@
             border: none;
             background: transparent;
             font-family: inherit;
+            touch-action: manipulation;
         }
 
         .view-btn.active {
@@ -1029,6 +1038,9 @@
             border-collapse: collapse;
             margin: 12px 0;
             font-size: 12px;
+            display: block;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
         }
 
         .prose-view th {
@@ -1321,6 +1333,33 @@
                 display: none;
             }
 
+            .btn-icon {
+                width: 44px;
+                height: 44px;
+            }
+
+            .theme-toggle {
+                width: 44px;
+                height: 28px;
+                border-radius: 14px;
+            }
+
+            .theme-toggle-knob {
+                width: 20px;
+                height: 20px;
+                top: 3px;
+                left: 3px;
+            }
+
+            [data-theme="dark"] .theme-toggle-knob {
+                transform: translateX(16px);
+            }
+
+            .file-item,
+            .folder-row {
+                min-height: 44px;
+            }
+
             .viewer-toolbar {
                 flex-wrap: wrap;
                 padding: 7px 10px;
@@ -1348,6 +1387,15 @@
             .viewer-body {
                 padding: 10px;
             }
+
+            .prose-view {
+                padding: 14px;
+            }
+
+            .prose-view p,
+            .prose-view li {
+                font-size: 14px;
+            }
         }
 
         @media (max-width: 480px) {
@@ -1357,6 +1405,14 @@
 
             .step-title {
                 font-size: 10px;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: .01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: .01ms !important;
             }
         }
 

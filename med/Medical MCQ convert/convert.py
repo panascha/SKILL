@@ -33,7 +33,9 @@ OUTPUT_DIR = BASE_DIR / "output"
 INPUT_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-PROMPT_FILE = BASE_DIR / "medical-quiz-converter.md"
+PROMPT_FILE  = BASE_DIR / "medical-quiz-converter.md"
+COURSES_DIR  = BASE_DIR / "courses"
+COURSES_DIR.mkdir(exist_ok=True)
 
 # ─── Dynamic Category Parser & Helper ────────────────
 def parse_filename_metadata(file_stem: str) -> dict:
@@ -105,20 +107,21 @@ def parse_filename_metadata(file_stem: str) -> dict:
         "topic_label": topic_label
     }
 
-def sanitize_category(category_data, file_stem: str) -> list:
+def sanitize_category(category_data, file_stem: str, subject_code_override: str = "") -> list:
     """
     Standardizes the category array dynamically based on the input:
     Index 0: Default CategoryID (<SubjectCode>_<ExamGroup>)
     Index 1: Standardized CategoryID (<SubjectCode>_<SubGroupSuffix>_<TopicLabel>)
+    subject_code_override: if provided, overrides the SubjectCode derived from filename.
     """
     file_stem = file_stem.strip()
     meta = parse_filename_metadata(file_stem)
-    subject_code = meta["subject_code"]
+    subject_code = subject_code_override.strip().upper() if subject_code_override else meta["subject_code"]
     exam_group = meta["exam_group"]
     topic_label = meta["topic_label"]
-    
-    subgroups = ["ANA", "BIOCHEM", "PHYSIO", "MICRO", "PARASITO", "PATHO", "PHARM", "RADIO", "CLINICAL"]
-    
+
+    subgroups = ["LEC", "ANA", "BIOCHEM", "PHYSIO", "MICRO", "PARASITO", "PATHO", "PHARM", "RADIO", "CLINICAL"]
+
     # Pre-build prefixes to remove from clean topic
     prefixes_to_remove = [
         f"{subject_code}_{exam_group}",
@@ -159,6 +162,7 @@ def sanitize_category(category_data, file_stem: str) -> list:
 
     # Classify subgroup dynamically based on clean_topic keywords
     SUBGROUP_KEYWORDS = {
+        "LEC": ["LEC", "LECTURE"],
         "ANA": ["ANA", "ANATOMY", "HISTO", "EMBRYO", "NEUROANA", "STRUCTURE", "GROSS", "กายวิภาค"],
         "BIOCHEM": ["BIOCHEM", "BIOCHEMISTRY", "MOLECULAR", "METABOLISM", "GENE", "CELL", "ชีวเคมี"],
         "PHYSIO": ["PHYSIOLOGY", "FUNCTION", "MECHANISM", "สรีรวิทยา"],
@@ -171,23 +175,34 @@ def sanitize_category(category_data, file_stem: str) -> list:
     }
     
     sub_group = None
+
+    # 0. Priority: if Gemini explicitly returned _LEC_ in category, trust it over keyword scan
+    _raw_lec_check = ""
+    if isinstance(category_data, list):
+        _raw_lec_check = " ".join([str(x) for x in category_data]).upper()
+    elif category_data:
+        _raw_lec_check = str(category_data).upper()
+    if "_LEC_" in _raw_lec_check:
+        sub_group = "LEC"
+
     topic_upper = clean_topic.upper()
-    
-    # 1. Primary classification check on the actual topic name
-    for g, keywords in SUBGROUP_KEYWORDS.items():
-        for kw in keywords:
-            if len(kw) <= 3:
-                pattern = r'\b' + re.escape(kw) + r'\b'
-                if re.search(pattern, topic_upper):
-                    sub_group = g
-                    break
-            else:
-                if kw in topic_upper:
-                    sub_group = g
-                    break
-        if sub_group:
-            break
-            
+
+    # 1. Primary classification check on the actual topic name (skip if already set by priority check)
+    if not sub_group:
+        for g, keywords in SUBGROUP_KEYWORDS.items():
+            for kw in keywords:
+                if len(kw) <= 3:
+                    pattern = r'\b' + re.escape(kw) + r'\b'
+                    if re.search(pattern, topic_upper):
+                        sub_group = g
+                        break
+                else:
+                    if kw in topic_upper:
+                        sub_group = g
+                        break
+            if sub_group:
+                break
+
     # 2. Fallback check on API category data
     if not sub_group:
         raw_str = ""
@@ -307,16 +322,16 @@ def push_log(job: dict, msg: str, level: str = "info"):
     print(f"[{ts}] {msg}", flush=True)
 
 # ─── Image extraction ─────────────────────────────────
-def extract_images(pdf_path: Path, images_dir: Path) -> int:
+def extract_images(pdf_bytes: bytes, images_dir: Path) -> int:
     images_dir.mkdir(parents=True, exist_ok=True)
     count = 0
-    
+
     try:
         import fitz  # PyMuPDF
         import io
         from PIL import Image
-        
-        pdf_file = fitz.open(str(pdf_path))
+
+        pdf_file = fitz.open(stream=pdf_bytes, filetype="pdf")
         for page_index in range(len(pdf_file)):
             page = pdf_file[page_index]
             image_list = page.get_images(full=True)
@@ -348,7 +363,7 @@ def extract_images(pdf_path: Path, images_dir: Path) -> int:
     if count == 0:
         try:
             import pypdfium2 as pdfium
-            doc = pdfium.PdfDocument(str(pdf_path))
+            doc = pdfium.PdfDocument(pdf_bytes)
             for i, page in enumerate(doc):
                 bitmap = page.render(scale=1.5)
                 pil_img = bitmap.to_pil()
@@ -564,7 +579,7 @@ def process_pdf(job: dict, client, model_name: str, pdf_path: Path, subject_titl
         push_log(job, f"[{stem}] ไม่พบ {PROMPT_FILE.name} — ใช้ Default Prompt", "warn")
 
     # ── max_output_tokens ──
-    if "pro" in model_name.lower() or "3.5" in model_name:
+    if "pro" in model_name.lower() or "3.5" in model_name or "3.0" in model_name:
         max_out = 65536
     else:
         max_out = 8192
@@ -578,10 +593,20 @@ def process_pdf(job: dict, client, model_name: str, pdf_path: Path, subject_titl
 
     start = time.time()
 
+    # ── Read PDF bytes once (shared by image extraction and Gemini call) ──
+    try:
+        pdf_bytes = pdf_path.read_bytes()
+    except Exception as e:
+        push_log(job, f"[{stem}] อ่านไฟล์ PDF ล้มเหลว: {e}", "error")
+        summary["status"] = "failed"
+        summary["errors"].append(str(e))
+        summary["elapsed"] = round(time.time() - start, 1)
+        return summary, []
+
     # ── Step 1: Extract images ──
     push_log(job, f"[{stem}] ดึงรูปภาพจาก PDF...", "info")
     try:
-        n = extract_images(pdf_path, imgs_dir)
+        n = extract_images(pdf_bytes, imgs_dir)
         summary["images"] = n
         push_log(job, f"[{stem}] รูปภาพ {n} ไฟล์", "ok")
     except Exception as e:
@@ -607,7 +632,6 @@ def process_pdf(job: dict, client, model_name: str, pdf_path: Path, subject_titl
     uploaded_file = None
     push_log(job, f"[{stem}] ส่งคำวิเคราะห์ไปยัง Gemini API...", "info")
     try:
-        pdf_bytes = pdf_path.read_bytes()
         if len(pdf_bytes) <= INLINE_SIZE_LIMIT:
             # Inline path — no upload/delete calls needed
             pdf_part = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
@@ -661,9 +685,10 @@ def process_pdf(job: dict, client, model_name: str, pdf_path: Path, subject_titl
                 meta_block = {}
 
         # Sanitize category field for each question
+        subject_code_ov = subject_title.strip().upper() if subject_title else ""
         for q in questions:
             if isinstance(q, dict):
-                q["category"] = sanitize_category(q.get("category"), stem)
+                q["category"] = sanitize_category(q.get("category"), stem, subject_code_override=subject_code_ov)
                 
         summary["questions"] = len(questions)
         push_log(job, f"[{stem}] {len(questions)} ข้อ", "ok")
@@ -749,6 +774,15 @@ def run_conversion(job_id: str, api_key: str, model_name: str, filenames: list, 
         except Exception as e:
             push_log(job, f"⚠️ ไม่สามารถดึงข้อมูลเดิมจาก quizdata.js ได้ (จะเขียนทับใหม่): {e}", "warn")
 
+    FALLBACK_MODELS = ["gemini-3.5-flash", "gemini-3.0-flash", "gemini-2.5-flash"]
+    # Start from the user-chosen model if it's in the chain, else start at 0
+    try:
+        active_model_idx = FALLBACK_MODELS.index(model_name)
+    except ValueError:
+        active_model_idx = 0
+
+    all_quota_exhausted = False
+
     for i, pdf_path in enumerate(pdfs):
         if not pdf_path.exists():
             push_log(job, f"ไม่พบ {pdf_path.name}", "error")
@@ -757,9 +791,32 @@ def run_conversion(job_id: str, api_key: str, model_name: str, filenames: list, 
         job["current_file"] = pdf_path.name
         job["progress"] = int(i / len(pdfs) * 100)
 
-        summary, questions = process_pdf(job, client, model_name, pdf_path, subject_title, additional_prompt)
+        summary, questions = {}, []
+        for try_idx in range(active_model_idx, len(FALLBACK_MODELS)):
+            active_model = FALLBACK_MODELS[try_idx]
+            if try_idx > active_model_idx:
+                push_log(job, f"🔄 สลับโมเดลเป็น {active_model} เนื่องจากโควตาของโมเดลก่อนหน้าหมดแล้ว", "warn")
+            summary, questions = process_pdf(job, client, active_model, pdf_path, subject_title, additional_prompt)
+            if summary.get("status") == "success":
+                active_model_idx = try_idx  # stay on this model for remaining files
+                break
+            is_quota = any(
+                ("429" in e or "RESOURCE_EXHAUSTED" in e or "limit: 0" in e)
+                for e in summary.get("errors", [])
+            )
+            if is_quota and try_idx < len(FALLBACK_MODELS) - 1:
+                active_model_idx = try_idx + 1  # advance for all remaining files
+                continue
+            if is_quota:
+                push_log(job, "🔑 โควตาหมดทุกโมเดลแล้ว กรุณาเปลี่ยน API Key แล้วลองใหม่", "error")
+                all_quota_exhausted = True
+            break
+
         job["results"].append(summary)
         job["done"] = i + 1
+
+        if all_quota_exhausted:
+            break
 
         # ── นำคำถามมารวมเข้ากับข้อมูลชุดสะสมตาม Default_CategoryID ──
         if summary.get("status") == "success" and questions:
@@ -902,6 +959,8 @@ def api_run():
     if _jobs[job_id].get("running"):
         return jsonify(ok=False, error="กำลังรันอยู่แล้ว"), 400
 
+    _jobs[job_id]["running"] = True  # mark before thread start to close TOCTOU window
+
     t = threading.Thread(
         target=run_conversion,
         args=(job_id, api_key, model_name, filenames, subject_title, additional_prompt),
@@ -917,7 +976,26 @@ def api_status(job_id: str):
     job = _jobs[job_id]
     with _log_lock:
         logs = list(job["logs"][-300:])
-    return jsonify({**{k: v for k, v in job.items() if k != "logs"}, "logs": logs})
+        total_log_count = len(job["logs"])
+    return jsonify({**{k: v for k, v in job.items() if k != "logs"}, "logs": logs, "total_log_count": total_log_count})
+
+@app.route("/api/courses")
+def api_courses():
+    courses = []
+    for f in sorted(COURSES_DIR.glob("*.json")):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            courses.append({"id": f.stem, "name": data.get("name", f.stem)})
+        except Exception:
+            pass
+    return jsonify(courses=courses)
+
+@app.route("/api/courses/<course_id>")
+def api_course(course_id: str):
+    path = COURSES_DIR / f"{course_id}.json"
+    if not path.exists():
+        return jsonify(ok=False, error="Course not found"), 404
+    return jsonify(json.loads(path.read_text(encoding="utf-8")))
 
 @app.route("/api/download/<job_id>")
 def api_download(job_id: str):
@@ -1925,13 +2003,31 @@ HTML_PAGE = r"""<!DOCTYPE html>
           </div>
         </div>
 
-        <!-- 2. Combined Quiz Configuration -->
+        <!-- 2. Course Preset & Prompt Configuration -->
+        <div class="config-section">
+          <div class="section-label">📚 COURSE PRESET</div>
+
+          <div class="field">
+            <label>โหลด Course Preset</label>
+            <div class="hint">เลือกวิชาที่บันทึกไว้เพื่อโหลด Subject Code และ Lecture Topics อัตโนมัติ</div>
+            <select id="coursePreset" onchange="applyCourse()">
+              <option value="">— เลือก Course Preset หรือกรอกเองด้านล่าง —</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label>Subject Code <span style="font-weight:400;opacity:.7">(กรอกเองหรือโหลดจาก Preset)</span></label>
+            <input type="text" id="subjectTitle" placeholder="เช่น EMBRYO, CVS, GI, HEMATO" style="text-transform:uppercase">
+          </div>
+        </div>
+
+        <!-- 3. Extra Prompt Instruction -->
         <div class="config-section">
           <div class="section-label">📝 EXTRA PROMPT INSTRUCTION</div>
-          
+
           <div class="field">
-            <label>หัวข้อ/คำสั่งเฉพาะวิชาเพิ่มเติม</label>
-            <textarea id="additionalPrompt" rows="3" placeholder="ระบุวิชา หรือคำสั่งเสริมพิเศษรอบนี้ เช่น:&#10;[วิชา]: CVS Physiology&#10;[คำสั่ง]: แปลคำอธิบายตัวเลือกข้ออื่นให้ละเอียดเป็นพิเศษ..."></textarea>
+            <label>Lecture Topics / คำสั่งเฉพาะวิชาเพิ่มเติม</label>
+            <textarea id="additionalPrompt" rows="4" placeholder="ระบุรายชื่อ Lecture Topics หรือคำสั่งเสริมพิเศษรอบนี้&#10;(จะถูกโหลดอัตโนมัติเมื่อเลือก Course Preset)"></textarea>
           </div>
         </div>
 
@@ -2034,7 +2130,46 @@ function toggleConfig() {
 }
 
 // Initial structural settings loaded dynamically
+// ─── Course Preset Loader ───
+async function loadCourses() {
+  try {
+    const r = await fetch('/api/courses');
+    const d = await r.json();
+    const sel = document.getElementById('coursePreset');
+    sel.innerHTML = '<option value="">— เลือก Course Preset หรือกรอกเองด้านล่าง —</option>';
+    (d.courses || []).forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.name;
+      sel.appendChild(opt);
+    });
+  } catch(e) {}
+}
+
+async function applyCourse() {
+  const id = document.getElementById('coursePreset').value;
+  if (!id) return;
+  try {
+    const r = await fetch('/api/courses/' + id);
+    const d = await r.json();
+    if (d.subject_code) {
+      document.getElementById('subjectTitle').value = d.subject_code;
+    }
+    if (d.subgroup === 'LEC' && d.topics && d.topics.length) {
+      let prompt = 'รายชื่อหัวข้อบรรยาย (Lecture Topics) สำหรับการ assign category[1]:\n';
+      d.topics.forEach((t, i) => { prompt += `${i + 1}. ${t}\n`; });
+      prompt += '\nคำสั่งพิเศษ:\n';
+      prompt += `- SubjectCode = ${d.subject_code}\n`;
+      prompt += `- SubGroupSuffix = LEC\n`;
+      prompt += `- category[1] = ${d.subject_code}_LEC_<TopicLabel> (ต้องตรงกับรายชื่อ lecture ทุกตัวอักษร)\n`;
+      prompt += `- ถ้าข้อสอบไม่ตรงกับ lecture ใดเลย ให้ใช้ topic ที่ใกล้เคียงที่สุดจากรายการ`;
+      document.getElementById('additionalPrompt').value = prompt;
+    }
+  } catch(e) { alert('โหลด Course Preset ล้มเหลว: ' + e.message); }
+}
+
 window.addEventListener('DOMContentLoaded', () => {
+  loadCourses();
   const wrap = document.getElementById('configWrap');
   const btn  = document.getElementById('configToggle');
   
@@ -2088,9 +2223,9 @@ function renderFiles(processingName = '', results = []) {
       cls = 'failed'; icon = '❌';
     }
 
-    return `<div class="file-item ${cls}" onclick="toggleFile('${name}')">
+    return `<div class="file-item ${cls}" data-name="${escHtml(name)}" onclick="toggleFile(this.dataset.name)">
       <div class="file-checkbox">${sel ? '✓' : ''}</div>
-      <div class="file-label" title="${name}">${name}</div>
+      <div class="file-label" title="${escHtml(name)}">${escHtml(name)}</div>
       <div class="file-status-icon">${icon}</div>
     </div>`;
   }).join('');
@@ -2122,7 +2257,8 @@ function clearLog() {
 async function startConversion() {
   const apiKey    = document.getElementById('apiKey').value.trim();
   const model     = document.getElementById('modelSelect').value;
-  const addPrompt = document.getElementById('additionalPrompt').value.trim();
+  const addPrompt    = document.getElementById('additionalPrompt').value.trim();
+  const subjectTitle = document.getElementById('subjectTitle').value.trim().toUpperCase();
 
   if (!apiKey) { alert('กรุณาระบุ Gemini API Key ให้สมบูรณ์ก่อนดำเนินการ'); return; }
   if (!selectedFiles.size) { alert('กรุณาเลือกไฟล์อย่างน้อย 1 รายการเพื่อดำเนินระบบ'); return; }
@@ -2142,7 +2278,7 @@ async function startConversion() {
         model: model,
         files: [...selectedFiles],
         job_id: currentJobId,
-        subject_title: '',
+        subject_title: subjectTitle,
         additional_prompt: addPrompt
       })
     });
@@ -2217,10 +2353,13 @@ function updateUI(d) {
   renderFiles(d.current_file, d.results || []);
 
   const logs = d.logs || [];
-  if (logs.length > lastLogCount) {
+  const total = d.total_log_count ?? logs.length;
+  const sliceOffset = total - logs.length;
+  if (total > lastLogCount) {
     const console_ = document.getElementById('logConsole');
     if (lastLogCount === 0) console_.innerHTML = '';
-    for (let i = lastLogCount; i < logs.length; i++) {
+    const startInSlice = Math.max(0, lastLogCount - sliceOffset);
+    for (let i = startInSlice; i < logs.length; i++) {
       const e = logs[i];
       const line = document.createElement('div');
       line.className = 'log-line';
@@ -2228,7 +2367,7 @@ function updateUI(d) {
       console_.appendChild(line);
     }
     console_.scrollTop = console_.scrollHeight;
-    lastLogCount = logs.length;
+    lastLogCount = total;
   }
 
   if (!d.running && d.done > 0 && d.zip_path) {
@@ -2263,7 +2402,7 @@ function renderOutputs(outputs) {
   }
   grid.innerHTML = outputs.map(o => `
     <div class="result-card success">
-      <div class="result-name" title="${o.name}">📄 ${o.name}</div>
+      <div class="result-name" title="${escHtml(o.name)}">📄 ${escHtml(o.name)}</div>
       <div class="result-meta">
         <span class="tag green">✓ ${o.questions} คำถาม</span>
         ${o.has_images ? '<span class="tag blue">🖼 มีภาพประกอบ</span>' : ''}
