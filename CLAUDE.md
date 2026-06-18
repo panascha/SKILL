@@ -129,3 +129,26 @@ Loaded via `/api/courses` to populate the topic dropdown in the UI.
 - `file_stem` is passed directly into regex without `re.escape()`.
 - `_jobs` dict has no threading lock around all critical sections.
 - `subject_title` field was removed from the HTML UI but still expected by the Python backend.
+
+---
+
+## Project Status
+
+_Last updated: 2026-06-18_
+
+### Done
+- MCQ Converter Flask app (`med/Medical MCQ convert/`) — PDF → JSON/JS via Gemini, batch mode, live-reload prompt, cumulative quizdata.js, model fallback chain
+- MCQ Generator Flask app (`med/Medical MCQ generator/`) — extends converter with AI generation mode from lecture slides + old exam references
+- Lecture Pipeline Flask app (`med/Medical note/lecture-pipeline/`) — 5-stage note enrichment pipeline (slide → markdown → synthesize → enrich → crystallize → curriculum track)
+- Courses preset system (`courses/*.json`) with 4 subjects: CVS_Y3, EMBRYO_Y1, GEN1_Y1, PSYCHIATRY_Y1
+- `organize_output.py` utility for post-processing batch output
+- Prompt skill library: pharmaco-summarizer (merged Phase 2+3, prose drug details, mechanism-chain rule), note-resequencer, slide-to-markdown, medical report skills, engineering prompts
+- Root `CLAUDE.md` and sub-project `CLAUDE.md` for AI session guidance
+
+### In Progress
+- Uncommitted changes in `convert.py` (MCQ Converter), `app.py` (Lecture Pipeline), `slide-enrich.md`, `engineering/anyvibe.md`
+
+### Pending / Known Gaps
+- MCQ Generator bugs: Generate Mode uses Files API for all PDFs regardless of size, `job["done"]` not incremented, no `re.escape()` on `file_stem`, no threading lock on `_jobs`
+- `subject_title` field missing from Generator HTML UI but still parsed in backend
+- MCQ Converter/Generator output directories and KKU implementation notes not yet committed to repo
