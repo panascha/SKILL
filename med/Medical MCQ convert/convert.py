@@ -322,9 +322,10 @@ def push_log(job: dict, msg: str, level: str = "info"):
     print(f"[{ts}] {msg}", flush=True)
 
 # ─── Image extraction ─────────────────────────────────
-def extract_images(pdf_bytes: bytes, images_dir: Path) -> int:
+def extract_images(pdf_bytes: bytes, images_dir: Path, stem: str = "") -> int:
     images_dir.mkdir(parents=True, exist_ok=True)
     count = 0
+    prefix = f"{stem}_" if stem else ""
 
     try:
         import fitz  # PyMuPDF
@@ -335,20 +336,20 @@ def extract_images(pdf_bytes: bytes, images_dir: Path) -> int:
         for page_index in range(len(pdf_file)):
             page = pdf_file[page_index]
             image_list = page.get_images(full=True)
-            
+
             if image_list:
                 for image_index, img in enumerate(image_list, start=1):
                     xref = img[0]
                     base_image = pdf_file.extract_image(xref)
                     image_bytes = base_image["image"]
                     image_ext = base_image["ext"]
-                    
+
                     if len(image_bytes) < 2000:
                         continue
-                        
+
                     try:
                         image = Image.open(io.BytesIO(image_bytes))
-                        image_name = f"page_{page_index + 1}_img_{image_index}.{image_ext}"
+                        image_name = f"{prefix}page_{page_index + 1}_img_{image_index}.{image_ext}"
                         image_path = images_dir / image_name
                         image.save(image_path)
                         count += 1
@@ -367,7 +368,7 @@ def extract_images(pdf_bytes: bytes, images_dir: Path) -> int:
             for i, page in enumerate(doc):
                 bitmap = page.render(scale=1.5)
                 pil_img = bitmap.to_pil()
-                out = images_dir / f"page_{i+1:03d}_render.png"
+                out = images_dir / f"{prefix}page_{i+1:03d}_render.png"
                 pil_img.save(out)
                 count += 1
             doc.close()
@@ -606,7 +607,7 @@ def process_pdf(job: dict, client, model_name: str, pdf_path: Path, subject_titl
     # ── Step 1: Extract images ──
     push_log(job, f"[{stem}] ดึงรูปภาพจาก PDF...", "info")
     try:
-        n = extract_images(pdf_bytes, imgs_dir)
+        n = extract_images(pdf_bytes, imgs_dir, stem=stem)
         summary["images"] = n
         push_log(job, f"[{stem}] รูปภาพ {n} ไฟล์", "ok")
     except Exception as e:
@@ -2163,6 +2164,17 @@ async function applyCourse() {
       prompt += `- SubGroupSuffix = LEC\n`;
       prompt += `- category[1] = ${d.subject_code}_LEC_<TopicLabel> (ต้องตรงกับรายชื่อ lecture ทุกตัวอักษร)\n`;
       prompt += `- ถ้าข้อสอบไม่ตรงกับ lecture ใดเลย ให้ใช้ topic ที่ใกล้เคียงที่สุดจากรายการ`;
+      document.getElementById('additionalPrompt').value = prompt;
+    } else if (Array.isArray(d.subgroup) && d.subgroup.length) {
+      let prompt = '📝 EXTRA PROMPT INSTRUCTION\n\n';
+      prompt += `SubjectCode = ${d.subject_code}\n`;
+      prompt += `SubGroupSuffix = auto-classify จาก disciplines ต่อไปนี้: ${d.subgroup.join(', ')}\n\n`;
+      prompt += 'คำสั่งพิเศษ:\n';
+      prompt += `- category[0] = ${d.subject_code}_<ExamGroup>\n`;
+      prompt += `- category[1] = ${d.subject_code}_<SubGroupSuffix>_<TopicLabel>\n`;
+      prompt += `- <SubGroupSuffix> ต้องเป็นหนึ่งใน: ${d.subgroup.join(' / ')}\n`;
+      prompt += '- เลือก SubGroupSuffix ที่ตรงกับเนื้อหาหลักของข้อสอบแต่ละข้อ (keyword-based)\n';
+      prompt += '- ห้ามใช้ LEC เป็น SubGroupSuffix';
       document.getElementById('additionalPrompt').value = prompt;
     }
   } catch(e) { alert('โหลด Course Preset ล้มเหลว: ' + e.message); }

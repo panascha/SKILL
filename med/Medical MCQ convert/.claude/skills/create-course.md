@@ -43,7 +43,8 @@ Ask the user:
 1. **Subject code** — e.g. `CVS`, `GI`, `HEMATO`, `MS`, `NS`. Suggest based on course name.
 2. **Subgroup format**:
    - `LEC` — all questions mapped to lecture topics by name (recommended for year 1–2 integrated blocks)
-   - `discipline` — system auto-classifies by keywords (ANA/PHYSIO/PATHO/PHARM etc.) — no topic list needed (recommended for clinical-year blocks IF topics span many disciplines)
+   - Array of disciplines e.g. `["ANA", "BIOCHEM", "PHYSIO", "MICRO", "PARASITO", "PATHO", "PHARM", "RADIO", "CLINICAL"]` — system auto-classifies each question by keyword; no topic list needed (recommended when block spans many disciplines)
+   - Single discipline string e.g. `"PATHO"` — auto-classify, scoped to one discipline
 3. **File name** — suggest `<SUBJECT_CODE>_Y<N>.json` (e.g. `CVS_Y3.json`). Confirm with user.
 
 ## Step 5 — Build and write the JSON
@@ -52,18 +53,17 @@ Ask the user:
 {
   "name": "<Course Name> (<CourseCode>)",
   "subject_code": "<CODE>",
-  "subgroup": "<LEC or discipline>",
-  "topics": [
-    "<topic 1>",
-    "<topic 2>",
-    "..."
-  ]
+  "subgroup": "<see below>",
+  "topics": ["<topic 1>", "<topic 2>", "..."]
 }
 ```
 
-Write to: `C:\Users\LENOVO\Desktop\SKILL\med\Medical MCQ convert\courses\<filename>.json`
+`subgroup` values:
+- `"LEC"` → keep full `topics` array
+- `["ANA", "BIOCHEM", "PHYSIO", "MICRO", "PARASITO", "PATHO", "PHARM", "RADIO", "CLINICAL"]` → omit or empty `topics`
+- `"PATHO"` (single discipline) → omit or empty `topics`
 
-If subgroup = `discipline`, omit the `topics` array (or leave it empty `[]`).
+Write to: `C:\Users\LENOVO\Desktop\SKILL\med\Medical MCQ convert\courses\<filename>.json`
 
 ## Step 6 — Confirm and offer next step
 
