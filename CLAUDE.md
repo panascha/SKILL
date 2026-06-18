@@ -11,8 +11,11 @@ A personal skill/tool library for medical AI workflows, targeting KKU medical st
 | `med/Medical MCQ convert/` | Flask app that converts MCQ PDFs → JSON/JS via Gemini |
 | `med/Medical MCQ generator/` | Extended version that also *generates* new MCQs from lecture slides |
 | `med/Medical note/lecture-pipeline/` | Flask app that runs a 5-step note-enrichment pipeline on lecture slides |
+| `kku/` | KKU IntelSphere API skill (OpenAI-compatible LLM platform) |
 | `index.html` | Single-page markdown viewer (static, no build step) |
 | `engineering/`, `med/*.md`, `medical technologist/` | Prompt skill library (markdown only, no code) |
+
+Each sub-project has its own `CLAUDE.md` with full detail. This file covers cross-cutting concerns.
 
 ---
 
@@ -59,6 +62,41 @@ Both apps follow the same single-file pattern:
 - **Cumulative output**: `output/quizdata.js` is read at batch start and *merged* (not overwritten) — deduplication by exact `problem` text match.
 - **PDF delivery**: files ≤ 20 MB are sent inline to Gemini; larger files use the Files API (upload → convert → delete).
 - **Model fallback**: on quota exhaustion (429 / RESOURCE_EXHAUSTED), automatically advances `gemini-3.5-flash` → `gemini-3.0-flash` → `gemini-2.5-flash`.
+
+### Flask API routes (MCQ Converter)
+
+| Route | Method | Purpose |
+|---|---|---|
+| `/` | GET | Serves the embedded HTML page |
+| `/api/files` | GET | Lists PDFs in `input_pdfs/` |
+| `/api/outputs` | GET | Lists existing output dirs with question counts |
+| `/api/run` | POST | Starts a conversion job; returns `job_id` |
+| `/api/status/<job_id>` | GET | Returns job state, logs (last 300), and progress |
+| `/api/download/<job_id>` | GET | Streams the timestamped ZIP file |
+| `/api/courses` | GET | Lists course definition files from `courses/` |
+| `/api/courses/<course_id>` | GET | Returns full course JSON |
+
+`/api/run` body fields: `api_key`, `model`, `files`, `job_id`, `subject_title`, `additional_prompt`.
+
+### Image extraction
+
+`extract_images()` tries PyMuPDF (`fitz`) first — extracts embedded images (skips blobs < 2 KB). Falls back to `pypdfium2` to render each page at 1.5× scale as `page_NNN_render.png`. Images land in `output/<stem>/images/`.
+
+### Self-healing / retry logic
+
+- `execute_with_retry()` retries on HTTP 429 / 503 with progressive backoff: delay = `20 + 12 × attempt` seconds, up to 5 attempts; 12 s proactive cooldown between files.
+- `parse_json_response()` strips markdown fences, tries multiple extraction strategies, and falls back to `extract_valid_questions_from_broken_json` — a brace-matching scanner that recovers from truncated payloads.
+- Max output tokens: 65,536 for Pro/3.5 models; 8,192 for Flash-lite.
+
+### MCQ Generator output structure (differs from Converter)
+
+```
+output/
+├── generated_<timestamp>/
+│   ├── quizdata.js       ← generation result
+│   └── quizdata.json
+└── quizdata.js           ← global cumulative file (also updated)
+```
 
 ### Output schema — MDKKU compatibility invariants
 
@@ -118,7 +156,36 @@ Prompt files in `prompts/` are live-reloaded. Output goes to `output/<slide_name
 }
 ```
 
-Loaded via `/api/courses` to populate the topic dropdown in the UI.
+Loaded via `/api/courses` to populate the topic dropdown in the UI. Currently 4 presets: `CVS_Y3`, `EMBRYO_Y1`, `GEN1_Y1`, `PSYCHIATRY_Y1`.
+
+---
+
+## KKU IntelSphere API (`kku/`)
+
+KKU IntelSphere is KKU's AI API platform — OpenAI-compatible, so the standard `openai` SDK works directly:
+
+```python
+from openai import OpenAI
+client = OpenAI(
+    api_key=os.environ.get("KKU_API_KEY"),
+    base_url="https://gen.ai.kku.ac.th/api/v1"
+)
+```
+
+**Recommended defaults:** `gemini-2.5-flash` (balanced), `deepseek-v3.2` (1M tokens/day quota — best for high-volume batch), `claude-sonnet-4.6` (Thai text + instruction following).
+
+Daily quotas: Deepseek 1M, Gemini 350K, Meta/Nova/xAI/Qwen 200K, Claude/OpenAI/Mistral 150K tokens/day.
+
+Store the key as `KKU_API_KEY` environment variable. Full boilerplate in `kku/kku-intelsphere-implement-apikey.md`.
+
+---
+
+## Skill commands (MCQ Converter)
+
+Skills live in `med/Medical MCQ convert/.claude/skills/`:
+
+- **`/convert-medical`** — guided end-to-end conversion: checks server, builds `additional_prompt` from course preset, fires `/api/run`, monitors progress, verifies categories.
+- **`/create-course`** — parses a KKU Moodle page (Ctrl+A paste) to extract lecture topics and writes a `courses/*.json` preset.
 
 ---
 
@@ -129,26 +196,3 @@ Loaded via `/api/courses` to populate the topic dropdown in the UI.
 - `file_stem` is passed directly into regex without `re.escape()`.
 - `_jobs` dict has no threading lock around all critical sections.
 - `subject_title` field was removed from the HTML UI but still expected by the Python backend.
-
----
-
-## Project Status
-
-_Last updated: 2026-06-18_
-
-### Done
-- MCQ Converter Flask app (`med/Medical MCQ convert/`) — PDF → JSON/JS via Gemini, batch mode, live-reload prompt, cumulative quizdata.js, model fallback chain
-- MCQ Generator Flask app (`med/Medical MCQ generator/`) — extends converter with AI generation mode from lecture slides + old exam references
-- Lecture Pipeline Flask app (`med/Medical note/lecture-pipeline/`) — 5-stage note enrichment pipeline (slide → markdown → synthesize → enrich → crystallize → curriculum track)
-- Courses preset system (`courses/*.json`) with 4 subjects: CVS_Y3, EMBRYO_Y1, GEN1_Y1, PSYCHIATRY_Y1
-- `organize_output.py` utility for post-processing batch output
-- Prompt skill library: pharmaco-summarizer (merged Phase 2+3, prose drug details, mechanism-chain rule), note-resequencer, slide-to-markdown, medical report skills, engineering prompts
-- Root `CLAUDE.md` and sub-project `CLAUDE.md` for AI session guidance
-
-### In Progress
-- Uncommitted changes in `convert.py` (MCQ Converter), `app.py` (Lecture Pipeline), `slide-enrich.md`, `engineering/anyvibe.md`
-
-### Pending / Known Gaps
-- MCQ Generator bugs: Generate Mode uses Files API for all PDFs regardless of size, `job["done"]` not incremented, no `re.escape()` on `file_stem`, no threading lock on `_jobs`
-- `subject_title` field missing from Generator HTML UI but still parsed in backend
-- MCQ Converter/Generator output directories and KKU implementation notes not yet committed to repo
