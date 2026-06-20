@@ -115,7 +115,8 @@ Identify what the user has provided:
 5. **Subject code** — e.g., EN, GI, NS (infer from content if not given)
 6. **Question count** — number of questions per lecture (if specified in input); default = 35
 
-If sample exam is missing, default to USMLE Step 1/2 clinical vignette style.
+If sample exam is missing, default to USMLE Step 1/2 clinical vignette style — but kept short per
+the length rules in 2.1 below.
 
 ---
 
@@ -126,9 +127,13 @@ Then silently plan a **content distribution** proportional to that count:
 
 | Category | Target Share | Question Types |
 |---|---|---|
-| Basic Science (ANA, PHYSIO, BIOCHEM, PHARM, MICRO, PATHO) | ~30% | Mechanism-based, "Why does..." |
-| Clinical Diagnosis (Dx, DDx) | ~35% | Clinical vignette with labs/vitals |
-| Management (Tx, next best step) | ~35% | "What is the next best step..." |
+| Basic Science (ANA, PHYSIO, BIOCHEM, PHARM, MICRO, PATHO) | ~70% | Mechanism-based, "Why does...", direct knowledge recall and understanding |
+| Clinical Application (short-vignette Dx/Management) | ~30% | Brief clinical scenario requiring applied reasoning |
+
+This is a deliberate shift toward foundational science: most questions should test whether the
+student understands the underlying mechanism, structure, or pathway directly — not wrapped in a
+long clinical story. Only ~30% of questions should be clinical-application style, and even those
+stay brief (see 2.1).
 
 Also plan which CategoryID (topic key) each question belongs to — distribute across multiple topics when possible.
 
@@ -140,23 +145,35 @@ Ensure no two questions test the identical learning point.
 
 #### 2.1 Question Design
 
-**Clinical Vignette Format (for Dx and Management questions):**
-- Include: Age, Gender, Chief Complaint, HPI timeline
-- Include as appropriate: Vital Signs (BP, HR, RR, Temp, O2 sat), Physical Exam findings, Labs, Imaging
-- End with a specific stem: "Which of the following is the MOST LIKELY diagnosis?", "What is the NEXT BEST STEP in management?", "Which mechanism BEST explains...?"
-- Complexity: Moderate to Hard. Avoid simple recall — require reasoning.
+**Length rule (applies to ALL questions, non-negotiable):**
+Keep `problem` short enough to read in one glance — target **2-4 sentences max**, roughly
+under ~60 words. Long blocks of vitals/labs/timeline make the question "อ่านแล้วตาลาย" (eye-straining
+wall of text) — avoid that. Cut anything not essential to answering the question. If a clinical
+detail doesn't change the answer, leave it out.
 
-**Basic Science Format:**
-- Start from a physiological/pathological principle
-- Require analytical thinking before arriving at the answer
-- Can use mini-vignettes: "A medical student notes that..."
-- Focus on "Why/How" — mechanisms, pathways, consequences
+**Basic Science Format (~70% of questions):**
+- Ask directly about a fact, mechanism, structure, pathway, or principle
+- Can be a plain knowledge/understanding question — no vignette required
+- When a mini-scenario helps (e.g., "A drug that blocks X would most affect..."), keep it to
+  one short sentence of setup, then the question
+- Focus on "Why/How" or straightforward "What is/does..." — mechanisms, pathways, consequences,
+  structures, classic associations
+- Example length: *"Which receptor mediates the vasoconstrictor effect of norepinephrine on
+  vascular smooth muscle?"* — one sentence, no padding
+
+**Clinical Application Format (~30% of questions):**
+- Short vignette: 1-2 sentences max of clinical setup (age/sex + 1 key finding or short
+  history is usually enough — do NOT stack vitals + labs + PE + imaging unless absolutely
+  necessary to discriminate between answer choices)
+- End with a specific stem: "Which of the following is the MOST LIKELY diagnosis?", "What is the
+  NEXT BEST STEP in management?", "Which mechanism BEST explains...?"
+- Still requires reasoning, just compressed — trim every detail that isn't load-bearing for the answer
 
 **Question Stems to Vary (never repeat the same stem twice in a row):**
 - "Which of the following is MOST LIKELY to..."
 - "What is the NEXT BEST STEP in management?"
 - "Which mechanism BEST explains...?"
-- "A biopsy of the lesion would MOST LIKELY show..."
+- "Which of the following BEST describes the function/structure of...?"
 - "Which drug is MOST APPROPRIATE for...?"
 - "Which of the following lab findings is MOST consistent with...?"
 - "Which of the following BEST describes the pathophysiology of...?"
@@ -168,8 +185,11 @@ Ensure no two questions test the identical learning point.
   - ✅ `"Metformin///Insulin///Glipizide///Acarbose///Sitagliptin"`
   - ❌ `"Metformin /// Insulin"` or `"Metformin ///Insulin"`
 - **Plausible distractors**: choices must be homogeneous in grammatical structure and approximate length
-- **No obvious wrong answers**: every choice should require clinical reasoning to rule out
-- **Distractor strategy**: include common misdiagnoses, related-but-wrong drugs, mechanisms that partially fit
+- **No obvious wrong answers**: every choice should require clinical/scientific reasoning to rule out
+- **Distractor strategy**: include related structures/mechanisms/drugs that partially fit, common
+  misconceptions, or adjacent-but-wrong concepts
+- Keep choices short and parallel — single words, short phrases, or short clauses; avoid long
+  choice sentences that add to visual clutter
 
 #### 2.3 Answer Matching
 
@@ -186,21 +206,23 @@ Ensure no two questions test the identical learning point.
 ### Phase 3 — Explanation Writing (Critical Quality Gate)
 
 Each `explain` must be a **single continuous paragraph** — no `\n`, no bullet points inside the string.
+The explanation can still be thorough even though the question stem is short — depth belongs in
+`explain`, not in `problem`.
 
 **Required structure (flowing prose, NOT labeled sections):**
 
-1. **Key Concept** — Open by identifying the core diagnosis or concept based on the clinical findings
-2. **Why Correct** — Explain the correct answer using specific evidence from the question stem
+1. **Key Concept** — Open by identifying the core mechanism/diagnosis/concept being tested
+2. **Why Correct** — Explain the correct answer using specific reasoning or evidence from the question stem
 3. **Rule Out Each Distractor** — For EACH of the 4 wrong choices, explain why incorrect
-   - Style: `"ส่วนข้อ B ผิดเพราะ... (because...)"`, `"ข้อ C มักใช้ในกรณี... แต่ผู้ป่วยรายนี้..."`
-   - Be specific — reference clinical details from the question, not generic statements
-4. **Clinical Pearl** (optional) — One high-yield fact for NL/board exams
+   - Style: `"ส่วนข้อ B ผิดเพราะ... (because...)"`, `"ข้อ C มักใช้ในกรณี... แต่..."`
+   - Be specific — reference the actual concept being tested, not generic statements
+4. **Clinical/High-Yield Pearl** (optional) — One high-yield fact for NL/board exams
 
 **Language Rule (Non-negotiable):**
 - `explain` MUST be Thai prose mixed with English medical terminology
 - ❌ Pure English forbidden: `"The correct answer is ACE inhibitor because..."` — NEVER
 - ✅ Mixed Thai/English: `"ผู้ป่วยรายนี้มีภาวะ heart failure with reduced ejection fraction (HFrEF) ซึ่ง first-line treatment คือ ACE inhibitor เพราะ..."`
-- Never start with `"คำตอบที่ถูกต้องคือ"` — go straight to clinical reasoning
+- Never start with `"คำตอบที่ถูกต้องคือ"` — go straight to the reasoning
 
 **Tone:** Professional yet accessible. Write as if explaining to a medical student, not writing a textbook.
 
@@ -212,14 +234,14 @@ Before outputting, silently verify EVERY question:
 
 - [ ] `answer` exactly matches one segment in `choices` (split by `///`, exact string comparison)
 - [ ] `choices` uses `///` with no surrounding spaces; exactly 5 segments
-- [ ] `problem` starts with question number; includes sufficient clinical context
+- [ ] `problem` starts with question number; is short (2-4 sentences, ~60 words max) — no wall-of-text vitals/labs dump
 - [ ] `explain` covers correct answer + ALL 4 distractors ruled out
 - [ ] `explain` is Thai prose + English medical terms (NOT pure English)
 - [ ] No `\n`, unescaped `"`, or backslashes inside any string value
 - [ ] `img: ""`, `select: ""`, `state: false` (boolean) on every object
 - [ ] `category` is a single string equal to the verbatim CategoryID of the topic
-- [ ] No two questions test the identical clinical point
-- [ ] Questions span Basic Science, Diagnosis, and Management
+- [ ] No two questions test the identical point
+- [ ] Roughly 70% basic science (direct/mechanism-based) vs 30% short clinical-application questions overall
 
 Silently fix any errors before outputting.
 
@@ -252,13 +274,18 @@ var quizdata = {
 ## NL Exam Alignment Notes
 
 The Thai National License (NL) exam emphasizes:
-- **Clinical application** over pure memorization
-- **"Next best step"** management questions (most common type)
-- **Mechanism-based** basic science (especially pharmacology, pathophysiology)
-- **High-yield associations**: classic presentation → diagnosis → management
-- Questions test whether students can **apply knowledge** in real clinical scenarios
+- **Clinical application** over pure memorization — but this skill weights toward basic science
+  (~70%) per current configuration, with clinical application as a smaller (~30%) but still
+  important slice
+- **"Next best step"** management questions (most common clinical-style type)
+- **Mechanism-based** basic science (especially pharmacology, pathophysiology) — this is now the
+  primary focus
+- **High-yield associations**: structure/mechanism → function, or classic presentation → diagnosis
+- Questions test **understanding**, not just recall — even short basic-science stems should
+  require knowing *why*, not just *what*
 
-When in doubt about difficulty, err toward **moderate-hard** — the NL exam rewards reasoning, not recall.
+When in doubt about difficulty, err toward **moderate** — testing real understanding while staying
+quick to read.
 
 ---
 
@@ -270,30 +297,40 @@ route to the **medical-quiz-converter** skill.
 
 ---
 
-## Example Output (2 questions across 2 topics)
+## Example Output (3 questions — 2 basic science, 1 short clinical — across 2 topics)
 
 ```js
 var quizdata = {
     "EN_by AI_PHYSIO_Physiology of adrenal hormone": [
         {
-            problem: "1. A 35-year-old woman presents with hypertension, central obesity, purple striae on her abdomen, and proximal muscle weakness for 6 months. Labs show fasting glucose 145 mg/dL and serum cortisol 55 mcg/dL (normal: 5-25). A 24-hour urine free cortisol is markedly elevated. Which of the following is the MOST LIKELY source of excess cortisol production?",
+            problem: "1. Which zone of the adrenal cortex is primarily responsible for cortisol synthesis?",
             img: "",
-            choices: "ACTH-secreting pituitary adenoma///Primary adrenal adenoma///Ectopic ACTH from small cell lung carcinoma///Exogenous glucocorticoid use///Primary adrenal hyperplasia",
-            answer: "ACTH-secreting pituitary adenoma",
+            choices: "Zona fasciculata///Zona glomerulosa///Zona reticularis///Adrenal medulla///Zona pellucida",
+            answer: "Zona fasciculata",
             select: "",
-            explain: "ผู้ป่วยรายนี้มีอาการของ Cushing syndrome ได้แก่ central obesity, purple striae, proximal myopathy, hypertension และ hyperglycemia สาเหตุที่พบบ่อยที่สุด (~70%) คือ Cushing disease ซึ่งเกิดจาก ACTH-secreting pituitary adenoma ทำให้ ACTH สูงและกระตุ้น adrenal cortex ทั้งสองข้างให้ผลิต cortisol มากเกิน ส่วนข้อ B ผิดเพราะ primary adrenal adenoma จะทำให้ cortisol สูงแต่ ACTH ต่ำ (negative feedback) และมักพบ unilateral adrenal mass ข้อ C เป็น ACTH-dependent เช่นกันแต่มักพบในผู้สูงอายุ มี hypokalemia รุนแรง และ ACTH สูงมากผิดปกติ ข้อ D ผิดเพราะ exogenous glucocorticoid จะทำให้ทั้ง cortisol และ ACTH ต่ำ (suppression) ข้อ E ผิดเพราะ primary adrenal hyperplasia พบน้อยมากและต้องการ genetic workup Clinical Pearl: Dexamethasone suppression test ช่วยแยก pituitary vs ectopic ACTH — high-dose suppress ได้เฉพาะ pituitary source",
+            explain: "Zona fasciculata เป็นชั้นกลางของ adrenal cortex และเป็นแหล่งสร้าง cortisol หลักภายใต้การควบคุมของ ACTH จาก anterior pituitary ส่วนข้อ B (zona glomerulosa) ผิดเพราะชั้นนอกสุดนี้สร้าง aldosterone เป็นหลัก ควบคุมโดย renin-angiotensin system ไม่ใช่ ACTH ข้อ C (zona reticularis) ผิดเพราะชั้นในสุดสร้าง androgens (DHEA) เป็นหลัก ข้อ D (adrenal medulla) ผิดเพราะเป็นคนละส่วนกับ cortex สร้าง catecholamines ไม่ใช่ steroid hormone ข้อ E (zona pellucida) ผิดเพราะเป็นโครงสร้างของ oocyte ไม่เกี่ยวกับต่อมหมวกไต Clinical Pearl: จำลำดับชั้นจากนอกสุดเข้าใน ด้วย mnemonic 'GFR' (Glomerulosa-Fasciculata-Reticularis) คู่กับ 'salt-sugar-sex'",
+            category: "EN_by AI_PHYSIO_Physiology of adrenal hormone",
+            state: false
+        },
+        {
+            problem: "2. A drug that blocks 11-beta-hydroxylase would most directly impair synthesis of which hormone?",
+            img: "",
+            choices: "Cortisol///Aldosterone only///DHEA///Estrogen///Testosterone",
+            answer: "Cortisol",
+            select: "",
+            explain: "11-beta-hydroxylase เป็น enzyme สำคัญในขั้นตอนสุดท้ายของการสร้าง cortisol (เปลี่ยน 11-deoxycortisol เป็น cortisol) ในชั้น zona fasciculata การยับยั้ง enzyme นี้จึงลด cortisol production โดยตรง ส่วนข้อ B ผิดเพราะแม้ enzyme นี้มีบทบาทบางส่วนใน aldosterone pathway แต่ผลกระทบหลักและเด่นชัดที่สุดคือต่อ cortisol ไม่ใช่ aldosterone อย่างเดียว ข้อ C ผิดเพราะ DHEA synthesis ไม่ต้องพึ่ง 11-beta-hydroxylase ข้อ D และ E ผิดเพราะ sex steroid pathway ใช้ enzyme คนละชุด (เช่น 17,20-lyase) Clinical Pearl: 11-beta-hydroxylase deficiency เป็นสาเหตุของ congenital adrenal hyperplasia ที่ทำให้เกิด hypertension จาก mineralocorticoid precursor สะสม",
             category: "EN_by AI_PHYSIO_Physiology of adrenal hormone",
             state: false
         }
     ],
     "EN_by AI_PATHO_Pathology of adrenal gland": [
         {
-            problem: "2. A 50-year-old man is found to have an incidental 2.5 cm right adrenal mass on CT scan performed for kidney stones. He denies weight gain, hypertension, or muscle weakness. Biochemical workup shows normal 24-hour urine metanephrines, normal aldosterone-renin ratio, and a 1 mg overnight dexamethasone suppression test cortisol of 0.8 mcg/dL. Which of the following is the MOST APPROPRIATE next step?",
+            problem: "3. A 50-year-old man has an incidental 2.5 cm adrenal mass with normal hormone workup. What is the MOST appropriate next step?",
             img: "",
-            choices: "Surveillance imaging in 6-12 months///Immediate adrenalectomy///Fine-needle aspiration biopsy of the mass///Start spironolactone empirically///Refer for 131-I MIBG scintigraphy",
+            choices: "Surveillance imaging in 6-12 months///Immediate adrenalectomy///Fine-needle aspiration biopsy///Start spironolactone empirically///131-I MIBG scintigraphy",
             answer: "Surveillance imaging in 6-12 months",
             select: "",
-            explain: "ผู้ป่วยรายนี้มี adrenal incidentaloma ขนาด 2.5 cm ซึ่งไม่มี biochemical evidence ของ hypercortisolism (dexamethasone suppression cortisol < 1.8 mcg/dL = suppressed ปกติ), ไม่มี pheochromocytoma (metanephrines ปกติ) และไม่มี primary aldosteronism (ARR ปกติ) ขนาด < 4 cm และ imaging ที่ไม่น่ากังวล → guideline แนะนำ surveillance imaging ที่ 6-12 เดือน ส่วนข้อ B ผิดเพราะ immediate adrenalectomy สงวนไว้สำหรับ mass > 4 cm, rapid growth, หรือ functional tumor ข้อ C ผิดเพราะ FNA ของ adrenal mass ไม่ช่วย diagnose adrenocortical carcinoma ได้ดีและมี risk ของ seeding ข้อ D ผิดเพราะ spironolactone ใช้ใน primary aldosteronism ซึ่งผู้ป่วยนี้ไม่มี ข้อ E ผิดเพราะ MIBG scintigraphy ใช้สำหรับ suspected pheochromocytoma ซึ่ง metanephrines ปกติแล้ว ไม่มีข้อบ่งชี้",
+            explain: "Adrenal incidentaloma ขนาด < 4 cm ที่ biochemically silent (hormone workup ปกติทั้งหมด) และ imaging ไม่น่ากังวล → guideline แนะนำ surveillance imaging ที่ 6-12 เดือนแทนการผ่าตัดทันที ส่วนข้อ B ผิดเพราะ adrenalectomy สงวนไว้สำหรับ mass > 4 cm, โตเร็ว, หรือ functional tumor ข้อ C ผิดเพราะ FNA ไม่ช่วยแยก adrenocortical carcinoma ได้ดีและมี risk ของ tumor seeding ข้อ D ผิดเพราะ spironolactone ใช้เมื่อมี primary aldosteronism ซึ่งผู้ป่วยนี้ workup ปกติ ข้อ E ผิดเพราะ MIBG ใช้ตรวจ pheochromocytoma ซึ่งไม่มีข้อบ่งชี้ในรายนี้",
             category: "EN_by AI_PATHO_Pathology of adrenal gland",
             state: false
         }
