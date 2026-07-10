@@ -1,0 +1,18 @@
+{
+  "name": "Medical Genetics (GEN1)",
+  "subject_code": "GEN1",
+  "subgroup": "LEC",
+  "topics": [
+    "Chromosome",
+    "Central Dogma",
+    "Gene Expression",
+    "Pattern of Inheritance",
+    "Genetic Variation",
+    "Population Genetic",
+    "Medical Investigation",
+    "Cancer",
+    "Treatment",
+    "Clinical Genetic",
+    "Chromosome Abnormalities"
+  ]
+}

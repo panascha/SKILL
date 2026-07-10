@@ -1,0 +1,16 @@
+# Saved Gemini API keys — never commit (phase d)
+saved_keys.json
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Inputs (user-supplied source PDFs / slides — not part of the app)
+input_pdfs/
+input_lectures/
+input_old_exams/
+
+# Generated outputs — keep only the cumulative quizdata.js, drop per-run artifacts
+output/*/
+output/*.zip
+notes_output/
