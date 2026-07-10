@@ -2379,6 +2379,51 @@ def api_notes_download(session_id: str):
     return send_file(zip_path, as_attachment=True)
 
 
+# ─── Phase (e): manual-handoff chaining — Notes .md → Generate input ─────────────
+# File handoff (NOT a shared DB): scan finished Notes batches on disk and let the user
+# copy an enrich/summary .md into LECTURE_DIR, where the unchanged Generate pipeline
+# reads it as lecture text. Scans the FS (not notes_sessions) so a later session picks
+# up an earlier run. Generate-only scope: Convert globs *.pdf and extracts existing MCQs.
+NOTES_HANDOFF_KINDS = {"enrich": "lecture-enrich.md", "summary": "lecture-summary.md"}
+
+@app.route("/api/notes/outputs")
+def api_notes_outputs():
+    outs = []
+    batches = sorted(
+        [d for d in NOTES_OUTPUT_BASE.glob("batch_*") if d.is_dir()],
+        key=lambda x: x.stat().st_mtime, reverse=True,
+    )
+    for batch in batches:
+        for lec_dir in sorted(d for d in batch.iterdir() if d.is_dir()):
+            for kind, fname in NOTES_HANDOFF_KINDS.items():
+                f = lec_dir / fname
+                if f.exists():
+                    outs.append({
+                        "batch": batch.name,
+                        "lecture": lec_dir.name,
+                        "kind": kind,
+                        "size": f.stat().st_size,
+                    })
+    return jsonify({"outputs": outs})
+
+@app.route("/api/notes/use-as-lecture", methods=["POST"])
+def api_notes_use_as_lecture():
+    data = request.get_json(force=True, silent=True) or {}
+    batch = Path(str(data.get("batch", ""))).name    # strip path components
+    lecture = Path(str(data.get("lecture", ""))).name
+    kind = str(data.get("kind", ""))
+    if kind not in NOTES_HANDOFF_KINDS:
+        return jsonify(ok=False, error="ประเภทไฟล์ไม่ถูกต้อง"), 400
+    src = (NOTES_OUTPUT_BASE / batch / lecture / NOTES_HANDOFF_KINDS[kind]).resolve()
+    # traversal guard: source must resolve to a real file under NOTES_OUTPUT_BASE
+    if NOTES_OUTPUT_BASE.resolve() not in src.parents or not src.is_file():
+        return jsonify(ok=False, error="ไม่พบไฟล์"), 404
+    # snapshot copy; re-pick overwrites (re-run Notes → re-pick to refresh) — intended
+    dest_name = f"{lecture}_{kind}.md"
+    shutil.copyfile(src, LECTURE_DIR / dest_name)
+    return jsonify(ok=True, filename=dest_name)
+
+
 # ─── Embedded HTML (Refined Design & Scrolling Fixed) ────────────────────────────────────
 HTML_PAGE = r"""<!DOCTYPE html>
 <html lang="th">
@@ -3601,6 +3646,16 @@ HTML_PAGE = r"""<!DOCTYPE html>
         <div class="file-scroll" id="lectureList">
           <div class="empty-files"><span>📂</span>กำลังโหลด...</div>
         </div>
+
+        <!-- Phase (e): pull a finished Notes .md (enrich/summary) in as a slide input -->
+        <div class="file-toolbar" style="margin-top:14px">
+          <span class="file-count-badge">📥 จาก Notes</span>
+          <button class="tb-btn refresh" onclick="loadNotesOutputs()">🔄 รีเฟรช</button>
+        </div>
+        <div class="hint" style="margin:2px 2px 6px">เลือกไฟล์สรุปจากแท็บ Notes มาใช้เป็นสไลด์สำหรับออกข้อสอบ</div>
+        <div class="file-scroll" id="notesOutputList">
+          <div class="empty-files"><span>📝</span>กำลังโหลด...</div>
+        </div>
       </div>
 
       <!-- ══ NOTES MODE: 5-stage lecture-note pipeline ══ -->
@@ -3883,7 +3938,7 @@ function setMode(mode) {
 
   if (!isNotes)
     document.getElementById('runLabel').textContent = mode === 'generate' ? 'เริ่มสร้างข้อสอบใหม่' : 'เริ่มประมวลผลข้อสอบ';
-  if (mode === 'generate' && !generatorLoaded) { generatorLoaded = true; loadGeneratorFiles(); }
+  if (mode === 'generate' && !generatorLoaded) { generatorLoaded = true; loadGeneratorFiles(); loadNotesOutputs(); }
   if (isNotes && !document.querySelector('#notesLecturesWrap .n-lecture-card')) notesAddLecture();
 }
 
@@ -3904,6 +3959,48 @@ async function loadGeneratorFiles() {
     });
     if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
   } catch(e) {}
+}
+
+// ─── Phase (e): list finished Notes .md outputs, pick one → copy into LECTURE_DIR ───
+async function loadNotesOutputs() {
+  const wrap = document.getElementById('notesOutputList');
+  try {
+    const r = await fetch('/api/notes/outputs');
+    const d = await r.json();
+    const outs = d.outputs || [];
+    if (!outs.length) {
+      wrap.innerHTML = `<div class="empty-files"><span>📝</span>ยังไม่มีผลลัพธ์จาก Notes — รันแท็บ Notes ก่อน</div>`;
+      return;
+    }
+    const kindLabel = { enrich: 'Enrich (ละเอียด)', summary: 'Summary (สรุป)' };
+    wrap.innerHTML = outs.map(o => {
+      const kb = Math.max(1, Math.round(o.size / 1024));
+      const desc = `${o.lecture} · ${kindLabel[o.kind] || o.kind} · ${kb} KB`;
+      return `<div class="lec-item">
+        <div class="lec-head" style="cursor:default">
+          <div class="file-label" title="${escHtml(o.batch)}/${escHtml(o.lecture)}">${escHtml(desc)}</div>
+          <button class="tb-btn" onclick="useNotesOutput('${escJs(o.batch)}','${escJs(o.lecture)}','${escJs(o.kind)}')">＋ ใช้</button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    wrap.innerHTML = `<div class="empty-files"><span>⚠️</span>โหลดไม่สำเร็จ</div>`;
+  }
+}
+
+async function useNotesOutput(batch, lecture, kind) {
+  try {
+    const r = await fetch('/api/notes/use-as-lecture', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ batch, lecture, kind }),
+    });
+    const d = await r.json();
+    if (!d.ok) { alert(d.error || 'ดึงไฟล์ไม่สำเร็จ'); return; }
+    await loadGeneratorFiles();
+    selectedLectures.add(d.filename);
+    if (!lectureMeta[d.filename]) lectureMeta[d.filename] = { num: 35, topic: '' };
+    renderLectures();
+  } catch(e) { alert('ดึงไฟล์ไม่สำเร็จ: ' + e.message); }
 }
 
 function renderLectures() {

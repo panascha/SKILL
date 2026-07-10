@@ -1,8 +1,36 @@
 # MedSuite — Handoff
 
 ## Phase
-**(d) — Saved keys + rotation: BACKEND + UI + HEADLESS TESTS ALL DONE. Only LIVE verify
-pending (needs real Gemini keys).** Phase (c) done+headless-verified; its LIVE run also pending.
+**(e) — Manual-handoff chaining: CODE-COMPLETE + HEADLESS-VERIFIED (new surface).** Notes .md
+→ Generate input. Only the end-to-end "→ quiz" tail is key-blocked (redundant: same code path
+phase (b) already live-verified). Phases (a)–(d) DONE; (d) live-verify still pending.
+
+### Phase (e) — DONE (all in `MedSuite/convert.py`)
+File handoff, NOT a shared DB (advisor-confirmed). Scope = **Generate only** (Convert globs
+`*.pdf` + extracts existing MCQs; a note has none). Scans the **filesystem**, not `notes_sessions`,
+so a later session picks up an earlier Notes run.
+- Backend (after `/api/notes/download`): `NOTES_HANDOFF_KINDS = {enrich: lecture-enrich.md,
+  summary: lecture-summary.md}`. `GET /api/notes/outputs` scans `notes_output/batch_*/<lec>/`,
+  lists a kind only if that exact file exists (stopped run w/ only markdown → omitted).
+  `POST /api/notes/use-as-lecture {batch,lecture,kind}` → basename-strip + resolve-under-
+  `NOTES_OUTPUT_BASE` traversal guard + basename whitelist → `shutil.copyfile` into
+  `LECTURE_DIR/<lecture>_<kind>.md`. Re-pick OVERWRITES (snapshot semantics, intended).
+  Existing `run_generation` reads it unchanged (`LECTURE_DIR / Path(filename).name`).
+- Frontend (HTML_PAGE, inline): "📥 จาก Notes" picker in `#sectionGenerate` (reuses
+  `file-scroll`/`lec-item` styling, no new CSS). JS `loadNotesOutputs` (called on first switch
+  to Generate, next to `loadGeneratorFiles`) + `useNotesOutput` (mirrors `uploadFile`'s
+  post-action: copy → refresh → auto-select).
+- **VERIFY headless PASS** (`test_handoff.py`, Flask test_client, no key, 15 checks): listing
+  200 + enrich/summary listed + stopped-lec omitted + size present; copy → `01_TestLec_enrich.md`
+  in LECTURE_DIR, content verbatim, appears in `/api/generator-files`; re-pick overwrites (no dup);
+  bad kind → 400; traversal batch → 404; missing lecture → 404. Boot smoke :8765 clean (no cp874),
+  4 HTML markers render, `/api/notes/outputs` → `{outputs:[]}`. Fixture cleaned.
+- Minor deferral (advisor-OK): two batches sharing a `folder_stem` collide on the copied name
+  (`<lecture>_<kind>.md`) — plain overwrite, fine for verify; add a batch discriminator only if wanted.
+
+## (d) — Saved keys + rotation
+BACKEND + UI + HEADLESS TESTS ALL DONE. Only LIVE verify pending (needs real Gemini keys).
+Phase (c) done+headless-verified; its LIVE run also pending.
 
 ### Phase (d) VERIFY — headless PASS (scratchpad, no key/network)
 - `test_rotation.py` (Site 1 `run_conversion`, faked clients+process_pdf, 4 cases ALL PASS):
