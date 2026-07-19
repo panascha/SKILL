@@ -1510,7 +1510,7 @@ class NotesCancelled(Exception):
 class GoogleProvider:
     """Wraps google-genai SDK for the notes pipeline."""
 
-    def __init__(self, api_key: str, model_name: str, keys: list = None):
+    def __init__(self, api_key: str, model_name: str, keys: list = None, pacing: float = 13.0):
         from google.genai import types
         self._types = types
         # phase d — key rotation pool. Rotates on 429 only (see _call). Chat-chain
@@ -1534,7 +1534,7 @@ class GoogleProvider:
 
         # Rate limiter — 5 RPM cap
         self._last_call = 0.0
-        self._min_interval = 13.0
+        self._min_interval = float(pacing)
 
     def _pace(self, log_fn=None):
         now = time.time()
@@ -1702,6 +1702,10 @@ def run_single_lecture(
         (output_dir / "lecture-enrich.md").write_text(lecture_enrich, encoding="utf-8")
     if uploaded_summary_path:
         lecture_summary = Path(uploaded_summary_path).read_text(encoding="utf-8")
+        src_name = slide_name or lecture_label or ""
+        title = re.sub(r"[-_\s]+", " ", Path(src_name).stem).strip() if src_name else ""
+        if title and not lecture_summary.lstrip().startswith("#"):
+            lecture_summary = f"# {title}\n\n{lecture_summary}"
         (output_dir / "lecture-summary.md").write_text(lecture_summary, encoding="utf-8")
 
     # ── STEP 1: Slide PDF → Markdown ─────────────────────────
@@ -1827,6 +1831,10 @@ def run_single_lecture(
                     ],
                     log_fn=lambda msg: step_log("crystal", msg),
                 )
+            src_name = slide_name or lecture_label or ""
+            title = re.sub(r"[-_\s]+", " ", Path(src_name).stem).strip() if src_name else ""
+            if title and not lecture_summary.lstrip().startswith("#"):
+                lecture_summary = f"# {title}\n\n{lecture_summary}"
             (output_dir / "lecture-summary.md").write_text(lecture_summary, encoding="utf-8")
             step_log("crystal", f"✓ บันทึก lecture-summary.md ({len(lecture_summary):,} ตัวอักษร)")
             step_done("crystal", "lecture-summary.md")
@@ -1852,6 +1860,26 @@ def run_single_lecture(
         step_done("curriculum", "Curriculum_Map_updated.md")
 
 
+NOTES_FLAT_KINDS = {
+    "slide":  "lecture-markdown.md",
+    "trans":  "lecture-transcribe.md",
+    "enrich": "lecture-enrich.md",
+    "summary":"lecture-summary.md",
+    "curriculum": "Curriculum_Map_updated.md",
+}
+
+def publish_notes_flat(lec_label, lec_dir):
+    """Copy each produced .md from lec_dir to NOTES_OUTPUT_BASE/<lec_label>.md. Overwrites on collision."""
+    if not lec_dir or not lec_dir.is_dir():
+        return
+    safe_name = re.sub(r'[^\w\-. ]', '_', lec_label).strip() or "untitled"
+    for kind, fname in NOTES_FLAT_KINDS.items():
+        src = lec_dir / fname
+        if src.is_file():
+            dest = NOTES_OUTPUT_BASE / f"{safe_name}.{kind}.md"
+            shutil.copyfile(src, dest)
+
+
 def run_notes_batch(session_id, api_key, model_name, lectures, cooldown):
     import zipfile
     sess = notes_sessions[session_id]
@@ -1865,7 +1893,7 @@ def run_notes_batch(session_id, api_key, model_name, lectures, cooldown):
         return sess.get("cancel", False)
 
     try:
-        provider = GoogleProvider(api_key=api_key, model_name=model_name, keys=build_key_list(api_key))
+        provider = GoogleProvider(api_key=api_key, model_name=model_name, keys=build_key_list(api_key), pacing=0)
         sess["state"] = "running"
         emit("batch_start", total=len(lectures))
 
@@ -1889,6 +1917,9 @@ def run_notes_batch(session_id, api_key, model_name, lectures, cooldown):
             if lec_dir.exists():
                 shutil.rmtree(lec_dir)
             lec_dir.mkdir(parents=True, exist_ok=True)
+            # Phase (f) tweak: also publish individual .md files at NOTES_OUTPUT_BASE root
+            # so each lecture stands alone (no batch folder required). Collisions = last-run wins.
+            sess["_flat_lec_dir"] = lec_dir   # remember so we can copy out after run_single_lecture
 
             requested_steps = set(lec.get("steps", list(NOTES_DEFAULT_STEPS)))
 
@@ -1912,6 +1943,7 @@ def run_notes_batch(session_id, api_key, model_name, lectures, cooldown):
             while not lecture_settled:
                 try:
                     run_single_lecture(provider=provider, **lec_kwargs)
+                    publish_notes_flat(label, sess.get("_flat_lec_dir"))
                     emit("lecture_done", lecture=idx, label=label)
                     lecture_settled = True
                 except NotesCancelled:
@@ -1943,6 +1975,7 @@ def run_notes_batch(session_id, api_key, model_name, lectures, cooldown):
                         lec_dir.mkdir(parents=True, exist_ok=True)
                         try:
                             run_single_lecture(provider=fallback_prov, **lec_kwargs)
+                            publish_notes_flat(label, sess.get("_flat_lec_dir"))
                             emit("lecture_done", lecture=idx, label=label)
                         except NotesCancelled:
                             was_cancelled = True
@@ -2388,7 +2421,17 @@ NOTES_HANDOFF_KINDS = {"enrich": "lecture-enrich.md", "summary": "lecture-summar
 
 @app.route("/api/notes/outputs")
 def api_notes_outputs():
+    """List both flat .md files (per-lecture) and batch subdirs (for phase-e handoff)."""
     outs = []
+    # Flat per-lecture .md files at NOTES_OUTPUT_BASE root
+    for f in sorted(NOTES_OUTPUT_BASE.glob("*.md"), key=lambda x: x.stat().st_mtime, reverse=True):
+        outs.append({
+            "source": "flat",
+            "name": f.name,
+            "size": f.stat().st_size,
+            "mtime": f.stat().st_mtime,
+        })
+    # Batch subdirectories (legacy phase-e handoff + ZIP)
     batches = sorted(
         [d for d in NOTES_OUTPUT_BASE.glob("batch_*") if d.is_dir()],
         key=lambda x: x.stat().st_mtime, reverse=True,
@@ -2399,6 +2442,7 @@ def api_notes_outputs():
                 f = lec_dir / fname
                 if f.exists():
                     outs.append({
+                        "source": "batch",
                         "batch": batch.name,
                         "lecture": lec_dir.name,
                         "kind": kind,
@@ -2435,21 +2479,21 @@ HTML_PAGE = r"""<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg:          #080b11;
-    --surface:     #0e1320;
-    --card:        #151c2e;
-    --border:      rgba(255, 255, 255, 0.08);
-    --border-hover: rgba(255, 255, 255, 0.16);
-    --accent:      #0ea5e9; /* Sky 500 */
-    --accent-light:#38bdf8; /* Sky 400 */
-    --accent2:     #10b981; /* Emerald 500 */
-    --accent2-light:#34d399; /* Emerald 400 */
-    --warn:        #f97316; /* Orange 500 */
-    --err:         #ef4444; /* Red 500 */
-    --purple:      #8b5cf6; /* Violet 500 */
-    --purple-light:#a78bfa; /* Violet 400 */
-    --text:        #f1f5f9; /* Slate 100 */
-    --muted:       #94a3b8; /* Slate 400 */
+    --bg:          #f8fafc; /* Slate 50 - พื้นหลังโปร่งเบา */
+    --surface:     #ffffff; /* ขาวบริสุทธิ์สำหรับ Card และ Panel */
+    --card:        #f1f5f9; /* Slate 100 สำหรับกล่องและ Preset */
+    --border:      #e2e8f0; /* Slate 200 เส้นขอบตัดคม */
+    --border-hover:#cbd5e1; /* Slate 300 เส้นขอบเมื่อ Hover */
+    --accent:      #0284c7; /* Sky 600 สีน้ำเงินเข้มสำหรับ Light Theme */
+    --accent-light:#0ea5e9; /* Sky 500 สำหรับ Highlight */
+    --accent2:     #059669; /* Emerald 600 สีเขียวเพื่อการยืนยัน */
+    --accent2-light:#10b981; /* Emerald 500 */
+    --warn:        #ea580c; /* Orange 600 */
+    --err:         #dc2626; /* Red 600 */
+    --purple:      #7c3aed; /* Violet 600 */
+    --purple-light:#8b5cf6; /* Violet 500 */
+    --text:        #0f172a; /* Slate 900 สีอักษรคมชัดสูง */
+    --muted:       #475569; /* Slate 600 อักษรสนับสนุน */
     --mono:        'IBM Plex Mono', 'JetBrains Mono', 'Fira Code', monospace;
     --sans:        'IBM Plex Sans Thai', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
@@ -2468,7 +2512,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
 
   /* ── Header ── */
   header {
-    background: rgba(14, 19, 32, 0.85);
+    background: rgba(255, 255, 255, 0.85);
     border-bottom: 1px solid var(--border);
     display: flex;
     align-items: center;
@@ -2482,23 +2526,24 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .brand {
     display: flex; align-items: center; gap: 12px;
     font-size: 16px; font-weight: 700; letter-spacing: -0.02em;
-    color: #fff;
+    color: var(--text);
   }
 
   .brand-badge {
     width: 34px; height: 34px;
-    background: linear-gradient(135deg, var(--accent), var(--purple));
+    background: linear-gradient(135deg, var(--accent-light), var(--purple));
     border-radius: 9px;
     display: flex; align-items: center; justify-content: center;
     font-size: 18px;
-    box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(14, 165, 233, 0.2);
   }
 
   .header-version {
     font-size: 11px;
     color: var(--muted);
     font-family: var(--mono);
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(0, 0, 0, 0.04);
     padding: 2px 8px;
     border-radius: 6px;
     border: 1px solid var(--border);
@@ -2511,7 +2556,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     font-weight: 500;
     padding: 6px 14px;
     border-radius: 30px;
-    background: var(--card);
+    background: var(--surface);
     border: 1px solid var(--border);
     color: var(--muted);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -2530,9 +2575,9 @@ HTML_PAGE = r"""<!DOCTYPE html>
   }
 
   .header-pill.running {
-    background: rgba(14, 165, 233, 0.1);
-    border-color: rgba(14, 165, 233, 0.3);
-    color: var(--accent-light);
+    background: rgba(14, 165, 233, 0.08);
+    border-color: rgba(14, 165, 233, 0.25);
+    color: var(--accent);
     animation: pulse-glow 2s infinite;
   }
 
@@ -2541,9 +2586,9 @@ HTML_PAGE = r"""<!DOCTYPE html>
   }
 
   .header-pill.done {
-    background: rgba(16, 185, 129, 0.1);
-    border-color: rgba(16, 185, 129, 0.3);
-    color: var(--accent2-light);
+    background: rgba(16, 185, 129, 0.08);
+    border-color: rgba(16, 185, 129, 0.25);
+    color: var(--accent2);
   }
 
   .header-pill.done::before {
@@ -2551,7 +2596,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
   }
 
   @keyframes pulse-glow {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.4); }
+    0%, 100% { box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.2); }
     50%      { box-shadow: 0 0 0 6px rgba(14, 165, 233, 0); }
   }
 
@@ -2568,11 +2613,10 @@ HTML_PAGE = r"""<!DOCTYPE html>
     border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
-    overflow: hidden; /* Outer viewport is clipped */
+    overflow: hidden;
     height: 100%;
   }
 
-  /* Scrollable Container for Settings & Files inside Sidebar */
   .sidebar-content {
     flex: 1;
     overflow-y: auto;
@@ -2583,7 +2627,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
 
   /* Config Accordion Button */
   .config-collapse-btn {
-    background: rgba(255, 255, 255, 0.02);
+    background: rgba(0, 0, 0, 0.02);
     padding: 12px 20px;
     display: flex;
     justify-content: space-between;
@@ -2593,12 +2637,12 @@ HTML_PAGE = r"""<!DOCTYPE html>
     font-weight: 600;
     border-bottom: 1px solid var(--border);
     user-select: none;
-    color: #fff;
+    color: var(--text);
     transition: background 0.15s;
   }
 
   .config-collapse-btn:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(0, 0, 0, 0.04);
   }
 
   .config-collapse-btn span {
@@ -2613,7 +2657,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
     display: inline-block;
   }
 
-  /* When open, chevron rotates (points up) */
   .config-collapse-btn.open em {
     transform: rotate(180deg);
   }
@@ -2643,7 +2686,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     display: block;
     font-size: 12px;
     font-weight: 600;
-    color: #cbd5e1;
+    color: #334155;
     margin-bottom: 6px;
   }
 
@@ -2652,14 +2695,13 @@ HTML_PAGE = r"""<!DOCTYPE html>
     color: var(--muted);
     margin-bottom: 6px;
   }
-  .field .hint .mono { font-family: var(--mono); color: var(--accent-light); }
+  .field .hint .mono { font-family: var(--mono); color: var(--accent); }
 
-  /* Saved keys panel (phase d) */
   .sk-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
   .sk-empty { font-size: 12px; color: var(--muted); font-style: italic; padding: 4px 0; }
   .sk-row {
     display: flex; align-items: center; justify-content: space-between;
-    background: rgba(8, 11, 17, 0.7); border: 1px solid var(--border);
+    background: #f8fafc; border: 1px solid var(--border);
     border-radius: 8px; padding: 7px 10px;
   }
   .sk-row .sk-key { font-family: var(--mono); font-size: 12px; color: var(--text); }
@@ -2667,13 +2709,13 @@ HTML_PAGE = r"""<!DOCTYPE html>
     background: transparent; border: none; color: var(--muted); cursor: pointer;
     font-size: 14px; padding: 2px 6px; border-radius: 6px; line-height: 1;
   }
-  .sk-row .sk-del:hover { color: var(--err); background: rgba(239, 68, 68, 0.12); }
+  .sk-row .sk-del:hover { color: var(--err); background: rgba(239, 68, 68, 0.08); }
   .sk-add {
-    width: 100%; background: rgba(14, 165, 233, 0.10); color: var(--accent-light);
+    width: 100%; background: rgba(14, 165, 233, 0.06); color: var(--accent);
     border: 1px solid var(--border); border-radius: 8px; padding: 8px;
     font-family: var(--sans); font-size: 12px; cursor: pointer;
   }
-  .sk-add:hover { border-color: var(--accent); background: rgba(14, 165, 233, 0.18); }
+  .sk-add:hover { border-color: var(--accent-light); background: rgba(14, 165, 233, 0.12); }
 
   .input-wrap { position: relative; }
 
@@ -2681,8 +2723,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .field input[type="text"],
   .field select {
     width: 100%;
-    background: rgba(8, 11, 17, 0.7);
-    border: 1px solid var(--border);
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
     border-radius: 8px;
     color: var(--text);
     font-family: var(--sans);
@@ -2702,15 +2744,15 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .field select {
     padding-right: 32px;
     cursor: pointer;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2394a3b8' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 12px center;
   }
 
   .field textarea {
     width: 100%;
-    background: rgba(8, 11, 17, 0.7);
-    border: 1px solid var(--border);
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
     border-radius: 8px;
     color: var(--text);
     font-family: var(--sans);
@@ -2725,9 +2767,9 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .field input[type="text"]:focus,
   .field select:focus,
   .field textarea:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.15);
-    background: rgba(8, 11, 17, 0.9);
+    border-color: var(--accent-light);
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.12);
+    background: #ffffff;
   }
 
   .eye-btn {
@@ -2742,7 +2784,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
 
   .eye-btn:hover { color: var(--text); }
 
-  /* ── Config collapse wrapper ── */
   .config-sections-wrap {
     overflow: hidden;
     transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -2756,47 +2797,48 @@ HTML_PAGE = r"""<!DOCTYPE html>
     align-items: center;
     gap: 8px;
     flex-shrink: 0;
-    background: rgba(14, 19, 32, 0.4);
+    background: rgba(0, 0, 0, 0.02);
   }
 
   .file-count-badge {
     font-family: var(--mono);
     font-size: 11px;
     font-weight: 600;
-    color: var(--accent-light);
-    background: rgba(14, 165, 233, 0.1);
+    color: var(--accent);
+    background: rgba(14, 165, 233, 0.08);
     padding: 2px 8px;
     border-radius: 12px;
-    border: 1px solid rgba(14, 165, 233, 0.2);
+    border: 1px solid rgba(14, 165, 233, 0.15);
   }
 
   .tb-btn {
     font-size: 11px;
     font-weight: 500;
     color: var(--text);
-    background: rgba(255, 255, 255, 0.04);
+    background: #ffffff;
     border: 1px solid var(--border);
     cursor: pointer;
     font-family: var(--sans);
     padding: 4px 10px;
     border-radius: 6px;
     transition: all 0.15s;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
   }
 
   .tb-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: #f8fafc;
     border-color: var(--border-hover);
   }
 
   .tb-btn.refresh {
     margin-left: auto;
-    color: var(--accent-light);
-    border-color: rgba(14, 165, 233, 0.3);
-    background: rgba(14, 165, 233, 0.05);
+    color: var(--accent);
+    border-color: rgba(14, 165, 233, 0.25);
+    background: rgba(14, 165, 233, 0.04);
   }
 
   .tb-btn.refresh:hover {
-    background: rgba(14, 165, 233, 0.1);
+    background: rgba(14, 165, 233, 0.08);
     border-color: var(--accent);
   }
 
@@ -2817,24 +2859,25 @@ HTML_PAGE = r"""<!DOCTYPE html>
     cursor: pointer;
     margin-bottom: 6px;
     border: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.01);
+    background: #ffffff;
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     user-select: none;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.01);
   }
 
   .file-item:hover {
-    background: rgba(255, 255, 255, 0.03);
+    background: #f8fafc;
     border-color: var(--border-hover);
   }
 
   .file-item.selected {
-    background: rgba(14, 165, 233, 0.06);
+    background: rgba(14, 165, 233, 0.05);
     border-color: rgba(14, 165, 233, 0.3);
   }
 
   .file-item.processing {
-    background: rgba(249, 115, 22, 0.05);
-    border-color: rgba(249, 115, 22, 0.3);
+    background: rgba(249, 115, 22, 0.04);
+    border-color: rgba(249, 115, 22, 0.25);
     animation: pulse-border 2.5s infinite;
   }
 
@@ -2844,20 +2887,20 @@ HTML_PAGE = r"""<!DOCTYPE html>
   }
 
   .file-item.done {
-    background: rgba(16, 185, 129, 0.05);
-    border-color: rgba(16, 185, 129, 0.3);
+    background: rgba(16, 185, 129, 0.04);
+    border-color: rgba(16, 185, 129, 0.25);
   }
 
   .file-item.failed {
-    background: rgba(239, 68, 68, 0.05);
-    border-color: rgba(239, 68, 68, 0.3);
+    background: rgba(239, 68, 68, 0.04);
+    border-color: rgba(239, 68, 68, 0.25);
   }
 
   .file-checkbox {
     width: 18px; height: 18px;
     border-radius: 5px;
-    border: 1.5px solid rgba(255, 255, 255, 0.2);
-    background: rgba(8, 11, 17, 0.6);
+    border: 1.5px solid #cbd5e1;
+    background: #ffffff;
     flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
     font-size: 11px;
@@ -2879,7 +2922,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    color: #e2e8f0;
+    color: var(--text);
   }
 
   .file-status-icon {
@@ -2901,7 +2944,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     opacity: 0.4;
   }
 
-  /* ── Run Button (Sticky Footer) ── */
+  /* ── Run Button ── */
   .run-wrap {
     padding: 16px 20px;
     border-top: 1px solid var(--border);
@@ -2927,13 +2970,13 @@ HTML_PAGE = r"""<!DOCTYPE html>
     align-items: center;
     justify-content: center;
     gap: 8px;
-    box-shadow: 0 4px 15px rgba(14, 165, 233, 0.25);
+    box-shadow: 0 4px 12px rgba(14, 165, 233, 0.15);
   }
 
   .run-btn:hover:not(:disabled) {
     transform: translateY(-1px);
-    box-shadow: 0 6px 20px rgba(14, 165, 233, 0.4);
-    filter: brightness(1.1);
+    box-shadow: 0 6px 16px rgba(14, 165, 233, 0.25);
+    filter: brightness(1.05);
   }
 
   .run-btn:disabled {
@@ -2975,18 +3018,18 @@ HTML_PAGE = r"""<!DOCTYPE html>
 
   .progress-label {
     font-weight: 600;
-    color: #f1f5f9;
+    color: var(--text);
   }
 
   .progress-pct {
     font-family: var(--mono);
     font-weight: 600;
-    color: var(--accent-light);
+    color: var(--accent);
   }
 
   .progress-track {
     height: 6px;
-    background: rgba(255, 255, 255, 0.05);
+    background: #e2e8f0;
     border-radius: 3px;
     overflow: hidden;
   }
@@ -2996,7 +3039,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     background: linear-gradient(90deg, var(--accent), var(--purple));
     border-radius: 3px;
     transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 0 8px rgba(14, 165, 233, 0.5);
+    box-shadow: 0 0 6px rgba(14, 165, 233, 0.3);
   }
 
   .progress-sub {
@@ -3033,11 +3076,11 @@ HTML_PAGE = r"""<!DOCTYPE html>
   }
 
   .tab:hover {
-    color: #cbd5e1;
+    color: var(--text);
   }
 
   .tab.active {
-    color: var(--accent-light);
+    color: var(--accent);
     border-bottom-color: var(--accent);
   }
 
@@ -3047,7 +3090,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     font-size: 12px;
     font-weight: 500;
     color: var(--muted);
-    background: rgba(255, 255, 255, 0.02);
+    background: #ffffff;
     border: 1px solid var(--border);
     border-radius: 6px;
     padding: 5px 12px;
@@ -3058,8 +3101,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
 
   .icon-btn:hover {
     border-color: var(--accent);
-    color: var(--accent-light);
-    background: rgba(14, 165, 233, 0.05);
+    color: var(--accent);
+    background: rgba(14, 165, 233, 0.04);
   }
 
   /* Log Console */
@@ -3070,20 +3113,21 @@ HTML_PAGE = r"""<!DOCTYPE html>
     font-family: var(--mono);
     font-size: 12px;
     line-height: 1.8;
-    background: #05070c;
+    background: #f8fafc;
+    border: 1px solid var(--border);
   }
 
   .log-line {
     display: flex;
     gap: 16px;
     padding: 2px 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.01);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.03);
   }
 
-  .log-ts { color: rgba(148, 163, 184, 0.5); flex-shrink: 0; width: 64px; }
+  .log-ts { color: var(--muted); flex-shrink: 0; width: 64px; }
   .log-msg { word-break: break-word; flex: 1; }
-  .log-msg.info  { color: #94a3b8; }
-  .log-msg.ok    { color: var(--accent2-light); }
+  .log-msg.info  { color: #475569; }
+  .log-msg.ok    { color: var(--accent2); }
   .log-msg.warn  { color: var(--warn); }
   .log-msg.error { color: var(--err); font-weight: 600; }
 
@@ -3113,13 +3157,14 @@ HTML_PAGE = r"""<!DOCTYPE html>
   }
 
   .result-card {
-    background: var(--card);
+    background: #ffffff;
     border: 1px solid var(--border);
     border-radius: 10px;
     padding: 16px;
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
     overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
   }
 
   .result-card::before {
@@ -3133,8 +3178,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
 
   .result-card:hover {
     transform: translateY(-2px);
-    border-color: rgba(14, 165, 233, 0.3);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    border-color: rgba(14, 165, 233, 0.25);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.05);
   }
 
   .result-card.success::before { background: var(--accent2); }
@@ -3147,13 +3192,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    color: #fff;
+    color: var(--text);
     padding-left: 4px;
-  }
-
-  .result-name-link {
-    text-decoration: none;
-    color: inherit;
   }
 
   .result-meta {
@@ -3169,25 +3209,25 @@ HTML_PAGE = r"""<!DOCTYPE html>
     font-weight: 500;
     padding: 2px 8px;
     border-radius: 4px;
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(0, 0, 0, 0.03);
     color: var(--muted);
     border: 1px solid var(--border);
   }
 
   .tag.green {
-    background: rgba(16, 185, 129, 0.08);
-    color: var(--accent2-light);
-    border-color: rgba(16, 185, 129, 0.15);
+    background: rgba(16, 185, 129, 0.06);
+    color: var(--accent2);
+    border-color: rgba(16, 185, 129, 0.12);
   }
   .tag.red {
-    background: rgba(239, 68, 68, 0.08);
+    background: rgba(239, 68, 68, 0.06);
     color: var(--err);
-    border-color: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.12);
   }
   .tag.blue {
-    background: rgba(14, 165, 233, 0.08);
-    color: var(--accent-light);
-    border-color: rgba(14, 165, 233, 0.15);
+    background: rgba(14, 165, 233, 0.06);
+    color: var(--accent);
+    border-color: rgba(14, 165, 233, 0.12);
   }
 
   .result-empty {
@@ -3210,13 +3250,13 @@ HTML_PAGE = r"""<!DOCTYPE html>
     margin: 16px 28px 0;
     padding: 14px 20px;
     border-radius: 8px;
-    background: rgba(16, 185, 129, 0.08);
-    border: 1px solid rgba(16, 185, 129, 0.25);
+    background: rgba(16, 185, 129, 0.06);
+    border: 1px solid rgba(16, 185, 129, 0.2);
     display: flex;
     align-items: center;
     gap: 16px;
     flex-wrap: wrap;
-    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.1);
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.05);
     animation: slide-up 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
@@ -3229,10 +3269,10 @@ HTML_PAGE = r"""<!DOCTYPE html>
     font-size: 13px;
     flex: 1;
     line-height: 1.6;
-    color: #e2e8f0;
+    color: #334155;
   }
 
-  .done-banner strong { color: var(--accent2-light); }
+  .done-banner strong { color: var(--accent2); }
 
   .dl-btn {
     padding: 8px 20px;
@@ -3247,28 +3287,150 @@ HTML_PAGE = r"""<!DOCTYPE html>
     text-decoration: none;
     flex-shrink: 0;
     transition: all 0.2s;
-    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
+    box-shadow: 0 4px 10px rgba(16, 185, 129, 0.15);
   }
 
   .dl-btn:hover {
-    filter: brightness(1.1);
+    filter: brightness(1.05);
     transform: translateY(-1px);
   }
 
   /* ── Spinner ── */
   .spinner {
     width: 14px; height: 14px;
-    border: 2px solid rgba(255, 255, 255, 0.25);
-    border-top-color: #fff;
+    border: 2px solid rgba(14, 165, 233, 0.2);
+    border-top-color: var(--accent);
     border-radius: 50%;
     animation: spin 0.6s linear infinite;
     display: inline-block;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* ── Responsive Tablet ── */
-  @media (max-width: 900px) and (min-width: 640px) {
-    .main { grid-template-columns: 300px 1fr; }
+  /* ── Mode switcher ── */
+  .mode-switch { display:flex; gap:6px; margin: 16px 20px 10px; background:var(--card);
+    border:1px solid var(--border); border-radius:10px; padding:4px; }
+  .mode-btn { flex:1; padding:9px 8px; border:0; border-radius:7px; cursor:pointer;
+    background:transparent; color:var(--muted); font-size:12.5px; font-weight:600;
+    font-family:inherit; transition:all .15s; }
+  .mode-btn:hover { color:var(--text); }
+  .mode-btn.active { background:#ffffff;
+    color:var(--accent); box-shadow:0 2px 6px rgba(0,0,0,0.05); border: 1px solid var(--border); }
+
+  /* ── Generate lecture rows ── */
+  .lec-item { border:1px solid var(--border); border-radius:8px; padding:8px 10px; margin-bottom:8px;
+    background:#ffffff; }
+  .lec-head { display:flex; align-items:center; gap:8px; cursor:pointer; }
+  .lec-head .file-label { flex:1; font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lec-item.selected { border-color:var(--accent); }
+  .lec-meta { display:none; gap:8px; margin-top:8px; }
+  .lec-item.selected .lec-meta { display:flex; }
+  .lec-meta input { background:#ffffff; border:1px solid #cbd5e1; border-radius:6px;
+    color:var(--text); padding:6px 8px; font-size:12px; font-family:inherit; }
+  .lec-meta input.lec-num { width:72px; }
+  .lec-meta input.lec-topic { flex:1; min-width:0; }
+  .lec-status { font-size:14px; width:18px; text-align:center; }
+  .upload-row { display:flex; gap:6px; margin: 8px 16px 12px; }
+  .upload-row .tb-btn { flex:1; padding: 8px; }
+  #actionBtn { margin-top:8px; width:100%; padding:11px; border:0; border-radius:9px; cursor:pointer;
+    font-size:13px; font-weight:700; font-family:inherit; color:#fff; display:none; }
+  #actionBtn.stop  { background:var(--warn); }
+  #actionBtn.retry { background:linear-gradient(135deg,var(--accent2),var(--accent2-light)); }
+
+  /* Custom Scrollbar Styles */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+  /* ══ NOTES MODE ══ */
+  #notesRunWrap #notesStopBtn { margin-top:8px; width:100%; padding:11px; border:0; border-radius:9px;
+    cursor:pointer; font-family:var(--sans); font-size:.95rem; font-weight:600; color:#fff; background:var(--warn); }
+  #notesRunWrap #notesStopBtn:disabled { opacity:.6; cursor:default; }
+
+  #sectionNotes .n-lectures-wrap { display:flex; flex-direction:column; gap:.6rem; margin:.5rem 16px .75rem; }
+  #sectionNotes .n-lecture-card { background:#ffffff; border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+  #sectionNotes .n-lecture-header { display:flex; align-items:center; gap:.6rem; padding:.6rem .75rem;
+    background:var(--card); cursor:pointer; user-select:none; border-bottom:1px solid var(--border); }
+  #sectionNotes .n-lecture-num { font-family:var(--mono); font-size:.75rem; color:var(--muted); min-width:1.5rem; }
+  #sectionNotes .n-lecture-header input[type=text] { flex:1; background:transparent; border:none; color:var(--text);
+    font-family:var(--sans); font-size:.85rem; font-weight:500; padding:0; outline:none; }
+  #sectionNotes .n-chevron { font-size:.65rem; color:var(--muted); transition:transform .2s; margin-left:auto; }
+  #sectionNotes .n-lecture-card.open .n-chevron { transform:rotate(180deg); }
+  #sectionNotes .n-btn-remove { background:none; border:none; color:var(--err); cursor:pointer; font-size:.95rem;
+    padding:0 .2rem; line-height:1; opacity:.7; }
+  #sectionNotes .n-btn-remove:hover { opacity:1; }
+  #sectionNotes .n-lecture-body { padding:.75rem; display:none; }
+  #sectionNotes .n-lecture-card.open .n-lecture-body { display:block; }
+  #sectionNotes .n-row-2 { display:grid; grid-template-columns:1fr 1fr; gap:.75rem; }
+  #sectionNotes .n-opt { font-size:.65rem; background:rgba(14, 165, 233, 0.08); color:var(--accent);
+    border-radius:4px; padding:.05rem .35rem; margin-left:.35rem; }
+  #sectionNotes .n-drop-zone { border:2px dashed var(--border); border-radius:6px; padding:.85rem; text-align:center;
+    cursor:pointer; position:relative; transition:border-color .2s, background .2s; }
+  #sectionNotes .n-drop-zone:hover, #sectionNotes .n-drop-zone.dragover { border-color:var(--accent); background:rgba(14, 165, 233, 0.04); }
+  #sectionNotes .n-drop-zone input[type=file] { position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; height:100%; }
+  #sectionNotes .n-dz-icon { font-size:1.1rem; margin-bottom:.2rem; }
+  #sectionNotes .n-dz-label { font-size:.75rem; color:var(--muted); }
+  #sectionNotes .n-dz-filename { font-family:var(--mono); font-size:.7rem; color:var(--accent2); margin-top:.25rem; word-break:break-all; }
+  #sectionNotes .n-resume { margin-top:.6rem; border:1px solid var(--border); border-radius:6px; background:#f8fafc; }
+  #sectionNotes .n-resume summary { cursor:pointer; font-size:.78rem; font-weight:600; color:var(--accent); padding:.5rem .7rem; }
+  #sectionNotes .n-resume-grid { padding:.7rem; display:grid; grid-template-columns:1fr 1fr; gap:.5rem; border-top:1px solid var(--border); }
+  #sectionNotes .n-resume-grid input[type=file] { font-size:.72rem; color:var(--text); width:100%; }
+  #sectionNotes .n-steps-selector { margin:.7rem 0 .2rem; }
+  #sectionNotes .n-group-label { font-size:.72rem; font-weight:600; color:var(--muted); text-transform:uppercase;
+    letter-spacing:.05em; display:block; margin-bottom:.45rem; }
+  #sectionNotes .n-steps-grid { display:flex; flex-wrap:wrap; gap:.4rem; }
+  #sectionNotes .n-step-toggle { display:inline-flex; align-items:center; gap:.35rem; padding:.3rem .6rem; border-radius:5px;
+    border:1px solid var(--border); cursor:pointer; font-size:.75rem; background:transparent; color:var(--muted); user-select:none; }
+  #sectionNotes .n-step-toggle input { display:none; }
+  #sectionNotes .n-step-toggle.checked { border-color:var(--accent); color:var(--accent); background:rgba(14, 165, 233, 0.06); }
+  #sectionNotes .n-step-toggle.n-s-crystal.checked { border-color:var(--warn); color:var(--warn); background:rgba(249, 115, 22, 0.06); }
+  #sectionNotes .n-step-toggle.n-s-curr.checked { border-color:var(--accent2); color:var(--accent2); background:rgba(16, 185, 129, 0.06); }
+  #sectionNotes .n-btn-add { width: calc(100% - 32px); padding:.6rem; background:transparent; color:var(--accent);
+    border:2px dashed var(--accent); border-radius:8px; font-family:var(--sans); font-size:.85rem; font-weight:500; cursor:pointer; margin: 0 16px 12px; }
+  #sectionNotes .n-btn-add:hover { background:rgba(14, 165, 233, 0.04); }
+
+  /* Notes right panel */
+  #notesRightPanel.rpanel, #cgRightPanel.rpanel { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
+  #notesRightPanel .n-batch-summary { font-size:.85rem; color:var(--muted); margin-bottom:.75rem; padding:.6rem .75rem;
+    background:var(--surface); border-radius:6px; border-left:3px solid var(--accent); }
+  #notesRightPanel .n-progress-scroll { flex:1; overflow-y:auto; min-height:0; padding-right:.25rem; }
+  #notesRightPanel .n-lec-prog { border:1px solid var(--border); border-radius:8px; margin-bottom:.6rem; overflow:hidden; }
+  #notesRightPanel .n-lp-header { display:flex; align-items:center; gap:.6rem; padding:.6rem .75rem; background:var(--surface); cursor:pointer; }
+  #notesRightPanel .n-lec-badge { font-family:var(--mono); font-size:.7rem; padding:.15rem .45rem; border-radius:4px; background:var(--card); color:var(--muted); flex-shrink:0; }
+  #notesRightPanel .n-lec-badge.running { background:rgba(14, 165, 233, 0.1); color:var(--accent); }
+  #notesRightPanel .n-lec-badge.done { background:rgba(16, 185, 129, 0.1); color:var(--accent2); }
+  #notesRightPanel .n-lec-badge.error { background:rgba(239, 68, 68, 0.1); color:var(--err); }
+  #notesRightPanel .n-lp-title { flex:1; font-size:.85rem; font-weight:500; }
+  #notesRightPanel .n-chevron { font-size:.65rem; color:var(--muted); }
+  #notesRightPanel .n-lp-body { display:none; padding:.6rem .75rem; border-top:1px solid var(--border); background: #ffffff; }
+  #notesRightPanel .n-lec-prog.open .n-lp-body { display:block; }
+  #notesRightPanel .n-step-list { list-style:none; margin:0; padding:0; }
+  #notesRightPanel .n-step-item { display:flex; align-items:flex-start; gap:.6rem; padding:.5rem 0; border-bottom:1px solid var(--border); }
+  #notesRightPanel .n-step-item:last-child { border-bottom:none; }
+  #notesRightPanel .n-step-icon { width:1.2rem; flex-shrink:0; display:flex; justify-content:center; font-size:.9rem; margin-top:.05rem; }
+  #notesRightPanel .n-step-body { flex:1; min-width:0; }
+  #notesRightPanel .n-step-label { font-size:.82rem; font-weight:500; }
+  #notesRightPanel .n-step-log { font-family:var(--mono); font-size:.7rem; color:var(--muted); margin-top:.25rem; white-space:pre-wrap; word-break:break-all; }
+  #notesRightPanel .n-err-box { color:var(--err); background:rgba(239, 68, 68, 0.04); padding:.5rem; border:1px solid rgba(239, 68, 68, 0.15); border-radius:4px; margin-top:.3rem; }
+  #notesRightPanel .n-step-fn { font-family:var(--mono); font-size:.7rem; color:var(--accent2); margin-top:.15rem; }
+  #notesRightPanel .n-step-item[data-state=waiting] .n-step-icon::before { content:"○"; color:var(--muted); }
+  #notesRightPanel .n-step-item[data-state=running] .n-step-icon::before { content:"◌"; color:var(--accent); animation:nspin 1s linear infinite; display:inline-block; }
+  #notesRightPanel .n-step-item[data-state=done] .n-step-icon::before { content:"✓"; color:var(--accent2); }
+  #notesRightPanel .n-step-item[data-state=error] .n-step-icon::before { content:"✗"; color:var(--err); }
+  #notesRightPanel .n-package-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:.85rem 1rem; margin-top:.6rem; }
+  #notesRightPanel .n-package-title { font-size:.72rem; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin-bottom:.6rem; }
+  #notesRightPanel .n-done-banner { margin-top:.75rem; background:rgba(16, 185, 129, 0.08); border:1px solid var(--accent2); border-radius:8px;
+    padding:1rem 1.2rem; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; }
+  #notesRightPanel .n-done-banner.cancelled { background:rgba(249, 115, 22, 0.08); border-color:var(--warn); }
+  #notesRightPanel .n-done-banner p { font-size:.82rem; line-height:1.5; color: #334155; }
+  #notesRightPanel .n-done-banner strong { color:var(--accent2); }
+  #notesRightPanel .n-btn-download { padding:.55rem 1.1rem; background:var(--accent2); color:#ffffff; font-family:var(--sans);
+    font-size:.82rem; font-weight:600; border:none; border-radius:6px; cursor:pointer; text-decoration:none; flex-shrink:0; }
+  @keyframes nspin { from{transform:rotate(0)} to{transform:rotate(360deg)} }
+
+  /* ── Tablet Responsive Layout (Under 1024px) ── */
+  @media (max-width: 1024px) {
+    .main { grid-template-columns: 320px 1fr; }
     .config-section { padding: 12px 14px; }
     .section-label  { font-size: 10px; }
     .field label    { font-size: 11px; }
@@ -3280,11 +3442,11 @@ HTML_PAGE = r"""<!DOCTYPE html>
     .results-grid    { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
   }
 
-  /* ── Mobile Layout ── */
-  @media (max-width: 639px) {
+  /* ── Mobile Responsive Layout (Under 768px) ── */
+  @media (max-width: 768px) {
     body {
-      height: 100dvh;
-      grid-template-rows: 56px 1fr;
+      height: auto;
+      overflow-y: auto;
     }
     header { padding: 0 16px; gap: 8px; }
     .brand { font-size: 14px; }
@@ -3294,18 +3456,19 @@ HTML_PAGE = r"""<!DOCTYPE html>
     .main {
       display: flex;
       flex-direction: column;
-      overflow: hidden;
-      height: 100%;
+      overflow: visible;
+      height: auto;
     }
     .left {
       border-right: none;
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
-      max-height: 50vh;
+      height: auto;
+      max-height: none;
     }
     
     .config-collapse-btn {
-      background: var(--card);
+      background: rgba(0,0,0,0.01);
       padding: 10px 16px;
       display: flex;
       justify-content: space-between;
@@ -3321,7 +3484,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     .config-collapse-btn.open em { transform: rotate(180deg); }
 
     .config-sections-wrap {
-      max-height: 0; /* Default closed on mobile to save vertical space */
+      max-height: 0; /* Default closed on mobile */
     }
 
     .config-section { padding: 10px 16px; }
@@ -3337,9 +3500,9 @@ HTML_PAGE = r"""<!DOCTYPE html>
     .tb-btn { font-size: 10px; padding: 4px 8px; }
 
     .file-scroll {
-      flex: 1;
-      min-height: 100px;
-      max-height: 18vh;
+      flex: none;
+      min-height: 120px;
+      max-height: 200px;
       padding: 8px 12px;
     }
     .file-item  { padding: 8px 10px; margin-bottom: 4px; }
@@ -3349,8 +3512,9 @@ HTML_PAGE = r"""<!DOCTYPE html>
     .run-btn  { font-size: 13px; padding: 10px; }
 
     .right {
-      flex: 1;
-      min-height: 0;
+      flex: none;
+      height: auto;
+      overflow: visible;
     }
     .progress-bar-wrap { padding: 12px 16px; }
     .progress-row      { font-size: 11px; margin-bottom: 6px; }
@@ -3361,7 +3525,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     .tab-actions { gap: 4px; }
     .icon-btn { font-size: 10px; padding: 4px 8px; }
 
-    .log-console { font-size: 11px; line-height: 1.7; padding: 12px 16px; }
+    .log-console { height: 350px; font-size: 11px; line-height: 1.7; padding: 12px 16px; }
     .log-ts      { width: 52px; font-size: 10px; }
 
     .results-grid {
@@ -3376,129 +3540,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
     .done-banner p { font-size: 12px; }
     .dl-btn { font-size: 12px; padding: 6px 12px; }
   }
-
-  /* ── Mode switcher (Convert / Generate) ── */
-  .mode-switch { display:flex; gap:6px; margin-bottom:14px; background:var(--card);
-    border:1px solid var(--border); border-radius:10px; padding:4px; }
-  .mode-btn { flex:1; padding:9px 8px; border:0; border-radius:7px; cursor:pointer;
-    background:transparent; color:var(--muted); font-size:12.5px; font-weight:600;
-    font-family:inherit; transition:all .15s; }
-  .mode-btn:hover { color:var(--text); }
-  .mode-btn.active { background:linear-gradient(135deg,var(--accent),var(--accent-light));
-    color:#fff; box-shadow:0 2px 8px rgba(14,165,233,.35); }
-  /* ── Generate lecture rows ── */
-  .lec-item { border:1px solid var(--border); border-radius:8px; padding:8px 10px; margin-bottom:8px;
-    background:var(--card); }
-  .lec-head { display:flex; align-items:center; gap:8px; cursor:pointer; }
-  .lec-head .file-label { flex:1; font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .lec-item.selected { border-color:var(--accent); }
-  .lec-meta { display:none; gap:8px; margin-top:8px; }
-  .lec-item.selected .lec-meta { display:flex; }
-  .lec-meta input { background:var(--bg); border:1px solid var(--border); border-radius:6px;
-    color:var(--text); padding:6px 8px; font-size:12px; font-family:inherit; }
-  .lec-meta input.lec-num { width:72px; }
-  .lec-meta input.lec-topic { flex:1; min-width:0; }
-  .lec-status { font-size:14px; width:18px; text-align:center; }
-  .upload-row { display:flex; gap:6px; margin-bottom:10px; }
-  .upload-row .tb-btn { flex:1; }
-  #actionBtn { margin-top:8px; width:100%; padding:11px; border:0; border-radius:9px; cursor:pointer;
-    font-size:13px; font-weight:700; font-family:inherit; color:#fff; display:none; }
-  #actionBtn.stop  { background:var(--warn); }
-  #actionBtn.retry { background:linear-gradient(135deg,var(--accent2),var(--accent2-light)); }
-
-  /* Custom Scrollbar Styles */
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--border-hover); border-radius: 4px; }
-  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
-
-  /* ══ NOTES MODE (all selectors namespaced — zero collision with Convert/Generate) ══ */
-  #notesRunWrap #notesStopBtn { margin-top:8px; width:100%; padding:11px; border:0; border-radius:9px;
-    cursor:pointer; font-family:var(--sans); font-size:.95rem; font-weight:600; color:#fff; background:var(--warn); }
-  #notesRunWrap #notesStopBtn:disabled { opacity:.6; cursor:default; }
-
-  #sectionNotes .n-lectures-wrap { display:flex; flex-direction:column; gap:.6rem; margin:.5rem 0 .75rem; }
-  #sectionNotes .n-lecture-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
-  #sectionNotes .n-lecture-header { display:flex; align-items:center; gap:.6rem; padding:.6rem .75rem;
-    background:var(--card); cursor:pointer; user-select:none; border-bottom:1px solid var(--border); }
-  #sectionNotes .n-lecture-num { font-family:var(--mono); font-size:.75rem; color:var(--muted); min-width:1.5rem; }
-  #sectionNotes .n-lecture-header input[type=text] { flex:1; background:transparent; border:none; color:var(--text);
-    font-family:var(--sans); font-size:.85rem; font-weight:500; padding:0; outline:none; }
-  #sectionNotes .n-chevron { font-size:.65rem; color:var(--muted); transition:transform .2s; margin-left:auto; }
-  #sectionNotes .n-lecture-card.open .n-chevron { transform:rotate(180deg); }
-  #sectionNotes .n-btn-remove { background:none; border:none; color:var(--err); cursor:pointer; font-size:.95rem;
-    padding:0 .2rem; line-height:1; opacity:.7; }
-  #sectionNotes .n-btn-remove:hover { opacity:1; }
-  #sectionNotes .n-lecture-body { padding:.75rem; display:none; }
-  #sectionNotes .n-lecture-card.open .n-lecture-body { display:block; }
-  #sectionNotes .n-row-2 { display:grid; grid-template-columns:1fr 1fr; gap:.75rem; }
-  @media(max-width:900px){ #sectionNotes .n-row-2 { grid-template-columns:1fr; } }
-  #sectionNotes .n-opt { font-size:.65rem; background:rgba(14,165,233,.15); color:var(--accent-light);
-    border-radius:4px; padding:.05rem .35rem; margin-left:.35rem; }
-  #sectionNotes .n-drop-zone { border:2px dashed var(--border); border-radius:6px; padding:.85rem; text-align:center;
-    cursor:pointer; position:relative; transition:border-color .2s, background .2s; }
-  #sectionNotes .n-drop-zone:hover, #sectionNotes .n-drop-zone.dragover { border-color:var(--accent); background:rgba(14,165,233,.05); }
-  #sectionNotes .n-drop-zone input[type=file] { position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; height:100%; }
-  #sectionNotes .n-dz-icon { font-size:1.1rem; margin-bottom:.2rem; }
-  #sectionNotes .n-dz-label { font-size:.75rem; color:var(--muted); }
-  #sectionNotes .n-dz-filename { font-family:var(--mono); font-size:.7rem; color:var(--accent2-light); margin-top:.25rem; word-break:break-all; }
-  #sectionNotes .n-resume { margin-top:.6rem; border:1px solid var(--border); border-radius:6px; background:var(--bg); }
-  #sectionNotes .n-resume summary { cursor:pointer; font-size:.78rem; font-weight:600; color:var(--accent-light); padding:.5rem .7rem; }
-  #sectionNotes .n-resume-grid { padding:.7rem; display:grid; grid-template-columns:1fr 1fr; gap:.5rem; border-top:1px solid var(--border); }
-  @media(max-width:900px){ #sectionNotes .n-resume-grid { grid-template-columns:1fr; } }
-  #sectionNotes .n-resume-grid input[type=file] { font-size:.72rem; color:var(--text); width:100%; }
-  #sectionNotes .n-steps-selector { margin:.7rem 0 .2rem; }
-  #sectionNotes .n-group-label { font-size:.72rem; font-weight:600; color:var(--muted); text-transform:uppercase;
-    letter-spacing:.05em; display:block; margin-bottom:.45rem; }
-  #sectionNotes .n-steps-grid { display:flex; flex-wrap:wrap; gap:.4rem; }
-  #sectionNotes .n-step-toggle { display:inline-flex; align-items:center; gap:.35rem; padding:.3rem .6rem; border-radius:5px;
-    border:1px solid var(--border); cursor:pointer; font-size:.75rem; background:transparent; color:var(--muted); user-select:none; }
-  #sectionNotes .n-step-toggle input { display:none; }
-  #sectionNotes .n-step-toggle.checked { border-color:var(--accent); color:var(--accent-light); background:rgba(14,165,233,.1); }
-  #sectionNotes .n-step-toggle.n-s-crystal.checked { border-color:var(--warn); color:var(--warn); background:rgba(249,115,22,.1); }
-  #sectionNotes .n-step-toggle.n-s-curr.checked { border-color:var(--accent2); color:var(--accent2-light); background:rgba(16,185,129,.1); }
-  #sectionNotes .n-btn-add { width:100%; padding:.6rem; background:transparent; color:var(--accent-light);
-    border:2px dashed var(--accent); border-radius:8px; font-family:var(--sans); font-size:.85rem; font-weight:500; cursor:pointer; }
-  #sectionNotes .n-btn-add:hover { background:rgba(14,165,233,.08); }
-
-  /* Notes right panel */
-  #notesRightPanel.rpanel, #cgRightPanel.rpanel { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
-  #notesRightPanel .n-batch-summary { font-size:.85rem; color:var(--muted); margin-bottom:.75rem; padding:.6rem .75rem;
-    background:var(--card); border-radius:6px; border-left:3px solid var(--accent); }
-  #notesRightPanel .n-progress-scroll { flex:1; overflow-y:auto; min-height:0; padding-right:.25rem; }
-  #notesRightPanel .n-lec-prog { border:1px solid var(--border); border-radius:8px; margin-bottom:.6rem; overflow:hidden; }
-  #notesRightPanel .n-lp-header { display:flex; align-items:center; gap:.6rem; padding:.6rem .75rem; background:var(--card); cursor:pointer; }
-  #notesRightPanel .n-lec-badge { font-family:var(--mono); font-size:.7rem; padding:.15rem .45rem; border-radius:4px; background:var(--border); color:var(--muted); flex-shrink:0; }
-  #notesRightPanel .n-lec-badge.running { background:rgba(14,165,233,.2); color:var(--accent-light); }
-  #notesRightPanel .n-lec-badge.done { background:rgba(16,185,129,.2); color:var(--accent2-light); }
-  #notesRightPanel .n-lec-badge.error { background:rgba(239,68,68,.2); color:var(--err); }
-  #notesRightPanel .n-lp-title { flex:1; font-size:.85rem; font-weight:500; }
-  #notesRightPanel .n-chevron { font-size:.65rem; color:var(--muted); }
-  #notesRightPanel .n-lp-body { display:none; padding:.6rem .75rem; border-top:1px solid var(--border); }
-  #notesRightPanel .n-lec-prog.open .n-lp-body { display:block; }
-  #notesRightPanel .n-step-list { list-style:none; margin:0; padding:0; }
-  #notesRightPanel .n-step-item { display:flex; align-items:flex-start; gap:.6rem; padding:.5rem 0; border-bottom:1px solid var(--border); }
-  #notesRightPanel .n-step-item:last-child { border-bottom:none; }
-  #notesRightPanel .n-step-icon { width:1.2rem; flex-shrink:0; display:flex; justify-content:center; font-size:.9rem; margin-top:.05rem; }
-  #notesRightPanel .n-step-body { flex:1; min-width:0; }
-  #notesRightPanel .n-step-label { font-size:.82rem; font-weight:500; }
-  #notesRightPanel .n-step-log { font-family:var(--mono); font-size:.7rem; color:var(--muted); margin-top:.25rem; white-space:pre-wrap; word-break:break-all; }
-  #notesRightPanel .n-err-box { color:var(--err); background:rgba(239,68,68,.06); padding:.5rem; border:1px solid rgba(239,68,68,.25); border-radius:4px; margin-top:.3rem; }
-  #notesRightPanel .n-step-fn { font-family:var(--mono); font-size:.7rem; color:var(--accent2-light); margin-top:.15rem; }
-  #notesRightPanel .n-step-item[data-state=waiting] .n-step-icon::before { content:"○"; color:var(--muted); }
-  #notesRightPanel .n-step-item[data-state=running] .n-step-icon::before { content:"◌"; color:var(--accent-light); animation:nspin 1s linear infinite; display:inline-block; }
-  #notesRightPanel .n-step-item[data-state=done] .n-step-icon::before { content:"✓"; color:var(--accent2-light); }
-  #notesRightPanel .n-step-item[data-state=error] .n-step-icon::before { content:"✗"; color:var(--err); }
-  #notesRightPanel .n-package-card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:.85rem 1rem; margin-top:.6rem; }
-  #notesRightPanel .n-package-title { font-size:.72rem; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin-bottom:.6rem; }
-  #notesRightPanel .n-done-banner { margin-top:.75rem; background:rgba(16,185,129,.1); border:1px solid var(--accent2); border-radius:8px;
-    padding:1rem 1.2rem; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; }
-  #notesRightPanel .n-done-banner.cancelled { background:rgba(249,115,22,.1); border-color:var(--warn); }
-  #notesRightPanel .n-done-banner p { font-size:.82rem; line-height:1.5; }
-  #notesRightPanel .n-done-banner strong { color:var(--accent2-light); }
-  #notesRightPanel .n-btn-download { padding:.55rem 1.1rem; background:var(--accent2); color:#04120c; font-family:var(--sans);
-    font-size:.82rem; font-weight:600; border:none; border-radius:6px; cursor:pointer; text-decoration:none; flex-shrink:0; }
-  @keyframes nspin { from{transform:rotate(0)} to{transform:rotate(360deg)} }
 </style>
 </head>
 <body>
@@ -3531,79 +3572,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
         <button class="mode-btn" id="modeNotesBtn" onclick="setMode('notes')">📝 สรุปเลกเชอร์</button>
       </div>
 
-      <!-- Collapsible Settings Accordion (Active across all screen resolutions) -->
-      <div class="config-collapse-btn open" id="configToggle" onclick="toggleConfig()">
-        <span>⚙️ ตั้งค่า API &amp; Model Instruction</span>
-        <em class="chevron">▼</em>
-      </div>
-
-      <div class="config-sections-wrap" id="configWrap">
-
-        <!-- 1. API Configuration -->
-        <div class="config-section">
-          <div class="section-label">🔑 API CONFIGURATION</div>
-
-          <div class="field">
-            <label>Google AI Studio API Key</label>
-            <div class="hint">รับโทเค็นความปลอดภัยที่ <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--accent-light); text-decoration:none">aistudio.google.com</a></div>
-            <div class="input-wrap">
-              <input type="password" id="apiKey" placeholder="AIzaSy...">
-              <button class="eye-btn" id="eyeBtn" type="button">👁</button>
-            </div>
-          </div>
-
-          <!-- Saved keys + auto-rotation (phase d) -->
-          <div class="field">
-            <label>คลังคีย์ (หมุนเวียนอัตโนมัติเมื่อชนโควตา 429)</label>
-            <div class="hint">เก็บในเซิร์ฟเวอร์ที่ <span class="mono">saved_keys.json</span> (ไม่ commit). ใส่คีย์ในช่องด้านบนแล้วกดบันทึก เพื่อให้ระบบสลับคีย์เองเมื่อคีย์แรกเต็มโควตา — ไม่ต้องพิมพ์คีย์ตอนรันก็ได้</div>
-            <div id="savedKeysList" class="sk-list"><div class="sk-empty">ยังไม่มีคีย์ที่บันทึกไว้</div></div>
-            <button class="sk-add" id="saveKeyBtn" type="button">➕ บันทึกคีย์ในช่องด้านบน</button>
-          </div>
-
-          <div class="field">
-            <label>Gemini Model Selector</label>
-            <select id="modelSelect">
-              <!-- Gemini 3.5 & 3.1 Frontier Models -->
-              <option value="gemini-3.5-flash" selected>gemini-3.5-flash (เร็วสูงสุด · ความสามารถระดับ Pro · แนะนำ)</option>
-              <option value="gemini-3.1-pro">gemini-3.1-pro (วิเคราะห์เชิงลึกและ Coding สูงสุด)</option>
-              <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (ประหยัดค่าใช้จ่ายและประมวลผลเร็ว)</option>
-              <!-- Gemini 2.5 Production-Ready Stable Models -->
-              <option value="gemini-2.5-pro">gemini-2.5-pro (โมเดลระดับ Pro ความเสถียรสูง)</option>
-              <option value="gemini-2.5-flash">gemini-2.5-flash (โมเดลทั่วไป ความเสถียรสูง)</option>
-            </select>
-          </div>
-        </div>
-
-        <!-- 2. Course Preset & Prompt Configuration -->
-        <div class="config-section cg-only">
-          <div class="section-label">📚 COURSE PRESET</div>
-
-          <div class="field">
-            <label>โหลด Course Preset</label>
-            <div class="hint">เลือกวิชาที่บันทึกไว้เพื่อโหลด Subject Code และ Lecture Topics อัตโนมัติ</div>
-            <select id="coursePreset" onchange="applyCourse()">
-              <option value="">— เลือก Course Preset หรือกรอกเองด้านล่าง —</option>
-            </select>
-          </div>
-
-          <div class="field">
-            <label>Subject Code <span style="font-weight:400;opacity:.7">(กรอกเองหรือโหลดจาก Preset)</span></label>
-            <input type="text" id="subjectTitle" placeholder="เช่น EMBRYO, CVS, GI, HEMATO" style="text-transform:uppercase">
-          </div>
-        </div>
-
-        <!-- 3. Extra Prompt Instruction -->
-        <div class="config-section cg-only">
-          <div class="section-label">📝 EXTRA PROMPT INSTRUCTION</div>
-
-          <div class="field">
-            <label>Lecture Topics / คำสั่งเฉพาะวิชาเพิ่มเติม</label>
-            <textarea id="additionalPrompt" rows="4" placeholder="ระบุรายชื่อ Lecture Topics หรือคำสั่งเสริมพิเศษรอบนี้&#10;(จะถูกโหลดอัตโนมัติเมื่อเลือก Course Preset)"></textarea>
-          </div>
-        </div>
-
-      </div><!-- /config-sections-wrap -->
-
       <!-- ══ CONVERT MODE: pick PDFs from input_pdfs/ ══ -->
       <div id="sectionConvert">
         <div class="file-toolbar">
@@ -3621,20 +3589,20 @@ HTML_PAGE = r"""<!DOCTYPE html>
       <div id="sectionGenerate" style="display:none">
 
         <!-- Old-exam reference (style transfer) -->
-        <div class="field">
+        <div class="field" style="padding: 16px 20px 0;">
           <label>ข้อสอบเก่าอ้างอิง <span style="font-weight:400;opacity:.7">(.js/.json — ถอดสไตล์คำถาม)</span></label>
           <select id="oldExamSelect">
             <option value="">— ไม่ใช้ข้อสอบอ้างอิง (ออกตามมาตรฐาน NL/USMLE) —</option>
           </select>
-          <div class="upload-row" style="margin-top:8px">
-            <button class="tb-btn" onclick="document.getElementById('oldExamUpload').click()">⬆ อัปโหลดข้อสอบเก่า</button>
+          <div class="upload-row" style="margin: 8px 0 0; padding: 0;">
+            <button class="tb-btn" style="width: 100%; padding: 8px;" onclick="document.getElementById('oldExamUpload').click()">⬆ อัปโหลดข้อสอบเก่า</button>
           </div>
           <input type="file" id="oldExamUpload" accept=".js,.json" style="display:none"
                  onchange="uploadFile('old-exam', this)">
         </div>
 
         <!-- Lecture slides -->
-        <div class="file-toolbar">
+        <div class="file-toolbar" style="margin-top: 14px;">
           <span class="file-count-badge" id="lecCount">0 สไลด์</span>
           <button class="tb-btn refresh" onclick="loadGeneratorFiles()">🔄 รีเฟรช</button>
         </div>
@@ -3652,7 +3620,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
           <span class="file-count-badge">📥 จาก Notes</span>
           <button class="tb-btn refresh" onclick="loadNotesOutputs()">🔄 รีเฟรช</button>
         </div>
-        <div class="hint" style="margin:2px 2px 6px">เลือกไฟล์สรุปจากแท็บ Notes มาใช้เป็นสไลด์สำหรับออกข้อสอบ</div>
+        <div class="hint" style="margin:6px 20px 6px">เลือกไฟล์สรุปจากแท็บ Notes มาใช้เป็นสไลด์สำหรับออกข้อสอบ</div>
         <div class="file-scroll" id="notesOutputList">
           <div class="empty-files"><span>📝</span>กำลังโหลด...</div>
         </div>
@@ -3660,7 +3628,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
 
       <!-- ══ NOTES MODE: 5-stage lecture-note pipeline ══ -->
       <div id="sectionNotes" style="display:none">
-        <div class="field">
+        <div class="field" style="padding: 16px 20px 0;">
           <label>⏱️ Cooldown ระหว่าง Lecture (วินาที)</label>
           <div class="hint">หน่วงเวลากัน quota เต็มเมื่อประมวลผลหลาย lecture</div>
           <input type="number" id="notesCooldown" value="10" min="0" max="120">
@@ -3698,7 +3666,78 @@ HTML_PAGE = r"""<!DOCTYPE html>
    <div id="cgRightPanel" class="rpanel">
 
     <!-- Progress panel -->
-    <div class="progress-bar-wrap">
+    <!-- Moved config accordion here -->
+    <div class="config-box" id="rightConfigBox">
+      <div class="config-collapse-btn open" id="configToggle" onclick="toggleConfig()">
+        <span>⚙️ ตั้งค่า API &amp; Model Instruction</span>
+        <em class="chevron">▼</em>
+      </div>
+      <div class="config-sections-wrap" id="configWrap">
+        <!-- 1. API Configuration -->
+        <div class="config-section">
+          <div class="section-label">🔑 API CONFIGURATION</div>
+
+          <div class="field">
+            <label>Google AI Studio API Key</label>
+            <div class="hint">รับโทเค็นความปลอดภัยที่ <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--accent); text-decoration:none">aistudio.google.com</a></div>
+            <div class="input-wrap">
+              <input type="password" id="apiKey" placeholder="AIzaSy...">
+              <button class="eye-btn" id="eyeBtn" type="button">👁</button>
+            </div>
+          </div>
+
+          <!-- Saved keys + auto-rotation (phase d) -->
+          <div class="field">
+            <label>คลังคีย์ (หมุนเวียนอัตโนมัติเมื่อชนโควตา 429)</label>
+            <div class="hint">เก็บในเซิร์ฟเวอร์ที่ <span class="mono">saved_keys.json</span> (ไม่ commit). ใส่คีย์ในช่องด้านบนแล้วกดบันทึก เพื่อให้ระบบสลับคีย์เองเมื่อคีย์แรกเต็มโควตา — ไม่ต้องพิมพ์คีย์ตอนรันก็ได้</div>
+            <div id="savedKeysList" class="sk-list"><div class="sk-empty">ยังไม่มีคีย์ที่บันทึกไว้</div></div>
+            <button class="sk-add" id="saveKeyBtn" type="button">➕ บันทึกคีย์ในช่องด้านบน</button>
+          </div>
+
+          <div class="field">
+            <label>Gemini Model Selector</label>
+            <select id="modelSelect">
+              <option value="gemini-3.5-flash" selected>gemini-3.5-flash (เร็วสูงสุด · ความสามารถระดับ Pro · แนะนำ)</option>
+              <option value="gemini-3.1-pro">gemini-3.1-pro (วิเคราะห์เชิงลึกและ Coding สูงสุด)</option>
+              <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (ประหยัดค่าใช้จ่ายและประมวลผลเร็ว)</option>
+              <option value="gemini-2.5-pro">gemini-2.5-pro (โมเดลระดับ Pro ความเสถียรสูง)</option>
+              <option value="gemini-2.5-flash">gemini-2.5-flash (โมเดลทั่วไป ความเสถียรสูง)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 2. Course Preset & Prompt Configuration -->
+        <div class="config-section cg-only">
+          <div class="section-label">📚 COURSE PRESET</div>
+
+          <div class="field">
+            <label>โหลด Course Preset</label>
+            <div class="hint">เลือกวิชาที่บันทึกไว้เพื่อโหลด Subject Code และ Lecture Topics อัตโนมัติ</div>
+            <select id="coursePreset" onchange="applyCourse()">
+              <option value="">— เลือก Course Preset หรือกรอกเองด้านล่าง —</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label>Subject Code <span style="font-weight:400;opacity:.7">(กรอกเองหรือโหลดจาก Preset)</span></label>
+            <input type="text" id="subjectTitle" placeholder="เช่น EMBRYO, CVS, GI, HEMATO" style="text-transform:uppercase">
+          </div>
+        </div>
+
+        <!-- 3. Extra Prompt Instruction -->
+        <div class="config-section cg-only">
+          <div class="section-label">📝 EXTRA PROMPT INSTRUCTION</div>
+
+          <div class="field">
+            <label>Lecture Topics / คำสั่งเฉพาะวิชาเพิ่มเติม</label>
+            <textarea id="additionalPrompt" rows="4" placeholder="ระบุรายชื่อ Lecture Topics หรือคำสั่งเสริมพิเศษรอบนี้&#10;(จะถูกโหลดอัตโนมัติเมื่อเลือก Course Preset)"></textarea>
+          </div>
+        </div>
+
+      </div><!-- /config-sections-wrap -->
+    </div>
+
+  <div class="progress-bar-wrap">
       <div class="progress-row">
         <span class="progress-label" id="progLabel">รอการเริ่มประมวลผล</span>
         <span class="progress-pct" id="progPct">0%</span>
@@ -3740,13 +3779,14 @@ HTML_PAGE = r"""<!DOCTYPE html>
 
    <!-- Notes right panel (SSE per-lecture × per-step tree) -->
    <div id="notesRightPanel" class="rpanel" style="display:none">
-     <div class="n-batch-summary" id="notesBatchSummary">รอการเริ่มสรุปเลกเชอร์...</div>
-     <div class="n-progress-scroll">
+     <div class="n-batch-summary" id="notesBatchSummary" style="padding: 16px 28px 0; background: var(--bg);">รอการเริ่มสรุปเลกเชอร์...</div>
+     <div class="n-progress-scroll" style="padding: 16px 28px;">
        <div id="notesLecturesProgress"></div>
        <div class="n-package-card" id="notesPackageCard" style="display:none">
          <div class="n-package-title">📁 Package</div>
          <ul class="n-step-list" id="notesPackageList"></ul>
        </div>
+       <div id="notesFlatFilesArea" style="margin-top:16px;"></div>
        <div id="notesResultArea"></div>
      </div>
    </div>
@@ -4011,7 +4051,7 @@ function renderLectures() {
     return;
   }
   wrap.innerHTML = allLectures.map(name => {
-    const sel  = selectedLectures.has(name);
+    const sel = selectedLectures.has(name);
     const meta = lectureMeta[name] || { num: 35, topic: '' };
     return `<div class="lec-item ${sel ? 'selected' : ''}" data-name="${escHtml(name)}">
       <div class="lec-head" onclick="toggleLecture(this.parentElement.dataset.name)">
@@ -4656,6 +4696,9 @@ function notesShowDone(sid, folder, total, cancelled) {
       <p>${cancelled?'⏹️ หยุดกลางคัน':'✅ Batch สำเร็จ!'}<br><strong>${escHtml(folder)}</strong></p>
       <a class="n-btn-download" href="/api/notes/download/${sid}">⬇ ดาวน์โหลด ZIP</a>
     </div>`;
+  // Also refresh flat file list
+  loadNotesFlatFiles();
+
 }
 function notesShowFatal(msg) {
   document.getElementById('notesResultArea').innerHTML = `<div class="n-err-box" style="padding:1rem">❌ Fatal Error:\n${escHtml(msg)}</div>`;
@@ -4702,11 +4745,45 @@ async function notesStop() {
 // Initial Load Commands
 loadFiles();
 loadOutputs();
+loadNotesFlatFiles();
 setInterval(loadFiles, 15000);
+
+async function loadNotesFlatFiles() {
+  try {
+    const res = await fetch('/api/notes/outputs');
+    const data = await res.json();
+    const flat = data.outputs.filter(o => o.source === 'flat');
+    const area = document.getElementById('notesFlatFilesArea');
+    if (!area) return;
+    area.innerHTML = '';
+    if (flat.length === 0) { area.innerHTML = '<div class="n-flat-empty">ยังไม่มีสรุปเลกเชอร์แบบเดี่ยว</div>'; return; }
+    for (const f of flat) {
+      const div = document.createElement('div');
+      div.className = 'n-flat-file';
+      div.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;padding:.5rem 0">
+        <div style="font-weight:600">${escHtml(f.name)}</div>
+        <div><a href="/notes/static/${encodeURIComponent(f.name)}" target="_blank">⬇ เปิด/ดาวน์โหลด</a></div>
+      </div>`;
+      area.appendChild(div);
+    }
+  } catch(e) { console.warn('loadNotesFlatFiles', e); }
+}
+
+
+// Static route for flat notes files
 </script>
 </body>
 </html>
 """
+
+
+# Static route for flat notes files (served by Flask, not embedded HTML)
+@app.route('/notes/static/<path:fname>')
+def notes_static(fname):
+    p = NOTES_OUTPUT_BASE / Path(fname).name
+    if not p.exists() or not p.is_file():
+        return 'Not found', 404
+    return send_file(p, as_attachment=True)
 
 
 # ─── Entry point ──────────────────────────────────────
@@ -4726,5 +4803,5 @@ if __name__ == "__main__":
             print(f"📝 Created default markdown rule file: {PROMPT_FILE}")
         except Exception as e:
             print(f"⚠️ Failed to write default rule file: {e}")
-            
+
     app.run(debug=False, host="0.0.0.0", port=8765, threaded=True)
