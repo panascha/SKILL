@@ -68,17 +68,19 @@ var quizdata = {
     "answer": "Choice A",
     "select": "",
     "explain": "อธิบายหลักการแพทย์และเหตุผลทางการแพทย์อย่างละเอียด (ภาษาไทยผสมคำศัพท์ทางการแพทย์ภาษาอังกฤษ)...",
-    "category": ["Default_CategoryID", "Standardized_CategoryID"],
+    "category": "CVS_by AI_ANA_Anatomy of Heart",
     "state": false
 }
 ```
 
-### `category` field — always a 2-element array
+### `category` field — always a single string
 
-| Index | Name | Format | Example |
-|---|---|---|---|
-| 0 | Default_CategoryID | `SubjectCode_ExamGroup` | `"CVS_51MCQ1"` |
-| 1 | Standardized_CategoryID | `SubjectCode_SubGroupSuffix_TopicLabel` | `"CVS_ANA_Anatomy of Heart"` |
+A single canonical CategoryID string. It serves as **both** the `var quizdata` object key **and** the question's `category` value (they must match).
+
+| Topic type | Format | Example |
+|---|---|---|
+| MAPPED (system subject, with subgroup) | `<SubjectCode>_by AI_<SubGroupSuffix>_<TopicLabel>` | `"CVS_by AI_ANA_Anatomy of Heart"` |
+| LEC / general (no subgroup) | `<SubjectCode>_by AI_<TopicLabel>` | `"GEN2_by AI_Lipid metabolism"` |
 
 **SubGroupSuffix** must be exactly one of:
 `ANA`, `BIOCHEM`, `PHYSIO`, `MICRO`, `PARASITO`, `PATHO`, `PHARM`, `RADIO`, `CLINICAL`
