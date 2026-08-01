@@ -150,7 +150,8 @@ def parse_filename_metadata(file_stem: str) -> dict:
     known_subjects = ["CVS", "GI", "HEMATO", "MS", "NS", "EN"]
     subject_code = ""
     for s in known_subjects:
-        if s in file_stem.upper():
+        # match whole word to avoid substring hits inside longer words
+        if re.search(r"\\b" + re.escape(s) + r"\\b", file_stem.upper()):
             subject_code = s
             break
             
@@ -211,11 +212,11 @@ def parse_filename_metadata(file_stem: str) -> dict:
         "topic_label": topic_label
     }
 
-def sanitize_category(category_data, file_stem: str, subject_code_override: str = "") -> list:
+def sanitize_category(category_data, file_stem: str, subject_code_override: str = "") -> str:
     """
-    Standardizes the category array dynamically based on the input:
-    Index 0: Default CategoryID (<SubjectCode>_<ExamGroup>)
-    Index 1: Standardized CategoryID (<SubjectCode>_<SubGroupSuffix>_<TopicLabel>)
+    Returns a single category string for the question, used as the quizdata.js key.
+    Format: <SubjectCode>_by_AI_<SubGroup>_<TopicLabel>  (MAPPED / classified)
+            <SubjectCode>_by_AI_<TopicLabel>              (LEC / no subgroup)
     subject_code_override: if provided, overrides the SubjectCode derived from filename.
     """
     file_stem = file_stem.strip()
@@ -331,12 +332,21 @@ def sanitize_category(category_data, file_stem: str, subject_code_override: str 
     if not sub_group:
         sub_group = "CLINICAL"
 
-    # Index 0: Only subject_code and exam_group (Default_CategoryID)
-    final_idx_0 = f"{subject_code}_{exam_group}"
-    # Index 1: Standardized_CategoryID
-    final_idx_1 = f"{subject_code}_{sub_group}_{clean_topic}"
-    
-    return [final_idx_0, final_idx_1]
+    # Build single-string category per new spec:
+    # For MAPPED (non-LEC): <subject>_by_AI_<SUBGROUP>_<TopicLabel>
+    # For LEC: <subject>_by_AI_<TopicLabel>
+    if sub_group == 'LEC':
+        cat = f"{subject_code}_by_AI_{clean_topic}"
+    else:
+        cat = f"{subject_code}_by_AI_{sub_group}_{clean_topic}"
+
+    # Normalize: collapse spaces, remove illegal chars, convert spaces to underscores
+    cat = re.sub(r"\s+", ' ', cat).strip()
+    cat = re.sub(r"[^A-Za-z0-9 _]", '', cat)
+    cat = cat.replace(' ', '_')
+
+    return cat
+
 
 # ─── Default Prompt ───────────────────────────────────
 DEFAULT_SYSTEM_PROMPT = """You are a medical quiz converter. Your task is to convert medical exam questions (MCQs, clinical vignettes) from the provided PDF into a specific JSON structure.
@@ -662,13 +672,14 @@ def generate_content_with_fallback(job: dict, pool, primary_model: str, contents
     per-file execution_chain in run_conversion).
     """
     FALLBACK_CHAINS = {
-        "gemini-3.5-flash": ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash"],
+        "gemini-3.6-flash": ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash"],
+        "gemini-3.5-flash": ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"],
         "gemini-3.1-pro": ["gemini-3.1-pro", "gemini-2.5-pro", "gemini-3.5-flash"],
-        "gemini-3.1-flash-lite": ["gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash"],
+        "gemini-3.1-flash-lite": ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash"],
         "gemini-2.5-pro": ["gemini-2.5-pro", "gemini-3.1-pro", "gemini-2.5-flash"],
-        "gemini-2.5-flash": ["gemini-2.5-flash", "gemini-3.1-flash-lite", "gemini-3.5-flash"],
+        "gemini-2.5-flash": ["gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash"],
     }
-    fallback_models = FALLBACK_CHAINS.get(primary_model, [primary_model, "gemini-2.5-flash", "gemini-3.1-flash-lite"])
+    fallback_models = FALLBACK_CHAINS.get(primary_model, [primary_model, "gemini-2.5-flash", "gemini-3.5-flash-lite"])
 
     last_exception = None
     for current_model in fallback_models:
@@ -950,7 +961,9 @@ def process_pdf(job: dict, client, model_name: str, pdf_path: Path, subject_titl
         summary["questions"] = len(questions)
         push_log(job, f"[{stem}] {len(questions)} ข้อ", "ok")
     except Exception as e:
+        preview = raw[:500] if len(raw) <= 500 else raw[:500] + "..."
         push_log(job, f"[{stem}] Parse JSON ล้มเหลว: {e}", "error")
+        push_log(job, f"[DEBUG] Raw response preview:\n{preview}", "info")
         summary["status"] = "failed"
         summary["errors"].append(str(e))
         summary["elapsed"] = round(time.time() - start, 1)
@@ -959,9 +972,9 @@ def process_pdf(job: dict, client, model_name: str, pdf_path: Path, subject_titl
     # ── Step 6: Extract Metadata & Categories ──
     categories_found = []
     for q in questions:
-        if isinstance(q, dict) and "category" in q and isinstance(q["category"], list) and len(q["category"]) > 1:
-            cat_name = q["category"][1]
-            if cat_name and cat_name not in categories_found:
+        if isinstance(q, dict) and "category" in q and isinstance(q["category"], str) and q["category"].strip():
+            cat_name = q["category"].strip()
+            if cat_name not in categories_found:
                 categories_found.append(cat_name)
 
     meta = {
@@ -1100,13 +1113,13 @@ def run_conversion(job_id: str, api_key: str, model_name: str, filenames: list, 
         if summary.get("status") == "success" and questions:
             default_cat_id = None
             
-            # ดึง Default_CategoryID (Index 0) จากข้อสอบข้อแรกที่ประมวลผลเสร็จสิ้น
-            if (len(questions) > 0 and 
-                isinstance(questions[0], dict) and 
-                "category" in questions[0] and 
-                isinstance(questions[0]["category"], list) and 
-                len(questions[0]["category"]) > 0):
-                default_cat_id = questions[0]["category"][0]
+            # ดึง CategoryID (string) จากข้อสอบข้อแรกที่ประมวลผลเสร็จสิ้น
+            if (len(questions) > 0 and
+                isinstance(questions[0], dict) and
+                "category" in questions[0] and
+                isinstance(questions[0]["category"], str) and
+                questions[0]["category"].strip()):
+                default_cat_id = questions[0]["category"].strip()
             
             # กรณีโครงสร้างข้อมูลผิดพลาด ให้ถอยกลับไปสกัดรูปแบบจากชื่อไฟล์โดยตรง
             if not default_cat_id:
@@ -1386,9 +1399,9 @@ def run_generation(job_id: str, api_key: str, model_name: str, lecture_files: li
 
             categories_found = []
             for q in questions_list:
-                if isinstance(q, dict) and isinstance(q.get("category"), list) and len(q["category"]) > 1:
-                    cat_name = q["category"][1]
-                    if cat_name and cat_name not in categories_found:
+                if isinstance(q, dict) and isinstance(q.get("category"), str) and q["category"].strip():
+                    cat_name = q["category"].strip()
+                    if cat_name not in categories_found:
                         categories_found.append(cat_name)
 
             meta = {
@@ -1409,9 +1422,10 @@ def run_generation(job_id: str, api_key: str, model_name: str, lecture_files: li
             # Accumulate into this job's new data (dedup by problem within the job)
             default_cat_id = None
             if (questions_list and isinstance(questions_list[0], dict)
-                    and isinstance(questions_list[0].get("category"), list)
-                    and len(questions_list[0]["category"]) > 0):
-                default_cat_id = questions_list[0]["category"][0]
+                    and isinstance(questions_list[0].get("category"), str)):
+                cat_str = questions_list[0].get("category", "").strip()
+                if cat_str:
+                    default_cat_id = cat_str
             if not default_cat_id:
                 m2 = parse_filename_metadata(stem)
                 default_cat_id = f"{m2['subject_code']}_{m2['exam_group']}"
@@ -1427,7 +1441,9 @@ def run_generation(job_id: str, api_key: str, model_name: str, lecture_files: li
                                    "questions": len(questions_list), "errors": [], "elapsed": 0})
             push_log(job, f"✓ [{filename}] สร้างสำเร็จ {len(questions_list)} ข้อ → output/{folder_name}/", "ok")
         except Exception as e:
+            preview = raw[:500] if len(raw) <= 500 else raw[:500] + "..."
             _fail(f"[{filename}] ประมวลผลคำตอบของ AI ล้มเหลว: {e}")
+            push_log(job, f"[DEBUG] Raw response preview:\n{preview}", "info")
             continue
 
         job["done"] = idx + 1
@@ -1666,10 +1682,16 @@ def run_single_lecture(
     slide_path, slide_name, transcript_path, curriculum_map_path,
     uploaded_markdown_path=None, uploaded_transcribe_path=None,
     uploaded_enrich_path=None, uploaded_summary_path=None,
-    requested_steps=None, cancel_check=None,
+    requested_steps=None, cancel_check=None, folder_stem="",
 ):
     if requested_steps is None:
         requested_steps = NOTES_DEFAULT_STEPS
+
+    # Flat-output naming: every produced .md is prefixed with the PDF stem so the file
+    # (and the SSE step_done filename) round-trips with /api/notes/outputs, which keys
+    # off lec_dir.name == folder_stem. ONE stem everywhere — never Path(slide_name).stem.
+    def _fname(base):
+        return f"{folder_stem}_{base}" if folder_stem else base
 
     def _ck():
         if cancel_check and cancel_check():
@@ -1693,20 +1715,20 @@ def run_single_lecture(
     # Load any pre-computed files (resume-from-stage)
     if uploaded_markdown_path:
         lecture_markdown = Path(uploaded_markdown_path).read_text(encoding="utf-8")
-        (output_dir / "lecture-markdown.md").write_text(lecture_markdown, encoding="utf-8")
+        (output_dir / _fname("lecture-markdown.md")).write_text(lecture_markdown, encoding="utf-8")
     if uploaded_transcribe_path:
         lecture_transcribe = Path(uploaded_transcribe_path).read_text(encoding="utf-8")
-        (output_dir / "lecture-transcribe.md").write_text(lecture_transcribe, encoding="utf-8")
+        (output_dir / _fname("lecture-transcribe.md")).write_text(lecture_transcribe, encoding="utf-8")
     if uploaded_enrich_path:
         lecture_enrich = Path(uploaded_enrich_path).read_text(encoding="utf-8")
-        (output_dir / "lecture-enrich.md").write_text(lecture_enrich, encoding="utf-8")
+        (output_dir / _fname("lecture-enrich.md")).write_text(lecture_enrich, encoding="utf-8")
     if uploaded_summary_path:
         lecture_summary = Path(uploaded_summary_path).read_text(encoding="utf-8")
         src_name = slide_name or lecture_label or ""
         title = re.sub(r"[-_\s]+", " ", Path(src_name).stem).strip() if src_name else ""
         if title and not lecture_summary.lstrip().startswith("#"):
             lecture_summary = f"# {title}\n\n{lecture_summary}"
-        (output_dir / "lecture-summary.md").write_text(lecture_summary, encoding="utf-8")
+        (output_dir / _fname("lecture-summary.md")).write_text(lecture_summary, encoding="utf-8")
 
     # ── STEP 1: Slide PDF → Markdown ─────────────────────────
     if "slide_md" in requested_steps:
@@ -1714,7 +1736,7 @@ def run_single_lecture(
         step_start("slide_md", "📄 แปลง PDF สไลด์ → Markdown")
         if lecture_markdown:
             step_log("slide_md", "ใช้ไฟล์ lecture-markdown.md จากรอบก่อนหน้านี้")
-            step_done("slide_md", "lecture-markdown.md")
+            step_done("slide_md", _fname("lecture-markdown.md"))
         elif slide_path:
             step_log("slide_md", f"กำลังอัปโหลดไฟล์ '{slide_name}' ไปยัง Gemini File API...")
             uploaded_slide = provider.upload_file(
@@ -1748,9 +1770,9 @@ def run_single_lecture(
                 [uploaded_slide, prompt_slide_md + "\n\n---\nโปรดแปลง PDF สไลด์ที่อัปโหลดมาเป็น Markdown ตาม format ที่กำหนด"],
                 log_fn=lambda msg: step_log("slide_md", msg),
             )
-            (output_dir / "lecture-markdown.md").write_text(lecture_markdown, encoding="utf-8")
-            step_log("slide_md", f"✓ บันทึก lecture-markdown.md ({len(lecture_markdown):,} ตัวอักษร)")
-            step_done("slide_md", "lecture-markdown.md")
+            (output_dir / _fname("lecture-markdown.md")).write_text(lecture_markdown, encoding="utf-8")
+            step_log("slide_md", f"✓ บันทึก {_fname('lecture-markdown.md')} ({len(lecture_markdown):,} ตัวอักษร)")
+            step_done("slide_md", _fname("lecture-markdown.md"))
         else:
             step_log("slide_md", "ข้ามการแปลงสไลด์ (ไม่มีไฟล์ PDF หรือ Markdown เริ่มต้น)")
             step_done("slide_md", "ข้ามขั้นตอน")
@@ -1761,7 +1783,7 @@ def run_single_lecture(
         step_start("transcript", "🎙️ สังเคราะห์ Transcript + Slide Notes")
         if lecture_transcribe:
             step_log("transcript", "ใช้ไฟล์ lecture-transcribe.md จากรอบก่อนหน้านี้")
-            step_done("transcript", "lecture-transcribe.md")
+            step_done("transcript", _fname("lecture-transcribe.md"))
         else:
             step_log("transcript", "กำลังอ่านไฟล์ transcript...")
             transcript_text = Path(transcript_path).read_text(encoding="utf-8")
@@ -1776,9 +1798,9 @@ def run_single_lecture(
                 ],
                 log_fn=lambda msg: step_log("transcript", msg),
             )
-            (output_dir / "lecture-transcribe.md").write_text(lecture_transcribe, encoding="utf-8")
-            step_log("transcript", f"✓ บันทึก lecture-transcribe.md ({len(lecture_transcribe):,} ตัวอักษร)")
-            step_done("transcript", "lecture-transcribe.md")
+            (output_dir / _fname("lecture-transcribe.md")).write_text(lecture_transcribe, encoding="utf-8")
+            step_log("transcript", f"✓ บันทึก {_fname('lecture-transcribe.md')} ({len(lecture_transcribe):,} ตัวอักษร)")
+            step_done("transcript", _fname("lecture-transcribe.md"))
 
     # ── STEP 3: Slide Enrich ──────────────────────────────────
     if "enrich" in requested_steps:
@@ -1786,7 +1808,7 @@ def run_single_lecture(
         step_start("enrich", "🔬 เพิ่มกลไกทางการแพทย์ — Slide Enrich")
         if lecture_enrich:
             step_log("enrich", "ใช้ไฟล์ lecture-enrich.md จากรอบก่อนหน้านี้")
-            step_done("enrich", "lecture-enrich.md")
+            step_done("enrich", _fname("lecture-enrich.md"))
         else:
             prompt_enrich = notes_load_prompt("slide-enrich.md")
             first_msg_parts = []
@@ -1801,9 +1823,9 @@ def run_single_lecture(
             lecture_enrich = provider.chat_send(
                 chat, first_msg_parts, log_fn=lambda msg: step_log("enrich", msg)
             )
-            (output_dir / "lecture-enrich.md").write_text(lecture_enrich, encoding="utf-8")
-            step_log("enrich", f"✓ บันทึก lecture-enrich.md ({len(lecture_enrich):,} ตัวอักษร)")
-            step_done("enrich", "lecture-enrich.md")
+            (output_dir / _fname("lecture-enrich.md")).write_text(lecture_enrich, encoding="utf-8")
+            step_log("enrich", f"✓ บันทึก {_fname('lecture-enrich.md')} ({len(lecture_enrich):,} ตัวอักษร)")
+            step_done("enrich", _fname("lecture-enrich.md"))
 
     # ── STEP 4: Crystallizer ──────────────────────────────────
     if "crystal" in requested_steps:
@@ -1811,7 +1833,7 @@ def run_single_lecture(
         step_start("crystal", "💎 ตกผลึกเนื้อหา — Lecture Crystallizer")
         if lecture_summary:
             step_log("crystal", "ใช้ไฟล์ lecture-summary.md จากรอบก่อนหน้านี้")
-            step_done("crystal", "lecture-summary.md")
+            step_done("crystal", _fname("lecture-summary.md"))
         else:
             prompt_crystal = notes_load_prompt("lecture-crystallizer.md")
             if chat is not None:
@@ -1835,9 +1857,9 @@ def run_single_lecture(
             title = re.sub(r"[-_\s]+", " ", Path(src_name).stem).strip() if src_name else ""
             if title and not lecture_summary.lstrip().startswith("#"):
                 lecture_summary = f"# {title}\n\n{lecture_summary}"
-            (output_dir / "lecture-summary.md").write_text(lecture_summary, encoding="utf-8")
-            step_log("crystal", f"✓ บันทึก lecture-summary.md ({len(lecture_summary):,} ตัวอักษร)")
-            step_done("crystal", "lecture-summary.md")
+            (output_dir / _fname("lecture-summary.md")).write_text(lecture_summary, encoding="utf-8")
+            step_log("crystal", f"✓ บันทึก {_fname('lecture-summary.md')} ({len(lecture_summary):,} ตัวอักษร)")
+            step_done("crystal", _fname("lecture-summary.md"))
 
     # ── STEP 5: Curriculum Map ────────────────────────────────
     if "curriculum" in requested_steps and curriculum_map_path:
@@ -1855,36 +1877,15 @@ def run_single_lecture(
             ],
             log_fn=lambda msg: step_log("curriculum", msg),
         )
-        (output_dir / "Curriculum_Map_updated.md").write_text(curriculum_updated, encoding="utf-8")
-        step_log("curriculum", f"✓ บันทึก Curriculum_Map_updated.md ({len(curriculum_updated):,} ตัวอักษร)")
-        step_done("curriculum", "Curriculum_Map_updated.md")
-
-
-NOTES_FLAT_KINDS = {
-    "slide":  "lecture-markdown.md",
-    "trans":  "lecture-transcribe.md",
-    "enrich": "lecture-enrich.md",
-    "summary":"lecture-summary.md",
-    "curriculum": "Curriculum_Map_updated.md",
-}
-
-def publish_notes_flat(lec_label, lec_dir):
-    """Copy each produced .md from lec_dir to NOTES_OUTPUT_BASE/<lec_label>.md. Overwrites on collision."""
-    if not lec_dir or not lec_dir.is_dir():
-        return
-    safe_name = re.sub(r'[^\w\-. ]', '_', lec_label).strip() or "untitled"
-    for kind, fname in NOTES_FLAT_KINDS.items():
-        src = lec_dir / fname
-        if src.is_file():
-            dest = NOTES_OUTPUT_BASE / f"{safe_name}.{kind}.md"
-            shutil.copyfile(src, dest)
+        (output_dir / _fname("Curriculum_Map_updated.md")).write_text(curriculum_updated, encoding="utf-8")
+        step_log("curriculum", f"✓ บันทึก {_fname('Curriculum_Map_updated.md')} ({len(curriculum_updated):,} ตัวอักษร)")
+        step_done("curriculum", _fname("Curriculum_Map_updated.md"))
 
 
 def run_notes_batch(session_id, api_key, model_name, lectures, cooldown):
     import zipfile
     sess = notes_sessions[session_id]
     q = sess["queue"]
-    batch_dir = sess["output_dir"]
 
     def emit(event, **data):
         q.put(json.dumps({"event": event, **data}))
@@ -1898,6 +1899,8 @@ def run_notes_batch(session_id, api_key, model_name, lectures, cooldown):
         emit("batch_start", total=len(lectures))
 
         was_cancelled = False
+        processed_dirs = []   # lec_dirs that ran → ZIP source (flat: no batch wrapper)
+        seen_stems = {}       # within-batch dup guard: same stem twice would rmtree the first
         for idx, lec in enumerate(lectures):
             if cancelled():
                 was_cancelled = True
@@ -1912,14 +1915,21 @@ def run_notes_batch(session_id, api_key, model_name, lectures, cooldown):
 
             emit("lecture_start", lecture=idx, label=label, total=len(lectures))
 
-            folder_stem = lec.get("folder_stem", f"{idx+1:02d}_{label}")
-            lec_dir = batch_dir / folder_stem
+            # Flat output: one folder per PDF stem directly under NOTES_OUTPUT_BASE (no batch
+            # wrapper). Guard within-batch dup stems — two cards on the same PDF would otherwise
+            # rmtree the first's output mid-run. Cross-session overwrite stays intended (snapshot).
+            folder_stem = lec.get("folder_stem") or f"{idx+1:02d}_{label}"
+            if folder_stem in seen_stems:
+                seen_stems[folder_stem] += 1
+                folder_stem = f"{folder_stem}_{seen_stems[folder_stem]}"
+            else:
+                seen_stems[folder_stem] = 1
+            lec_dir = NOTES_OUTPUT_BASE / folder_stem
             if lec_dir.exists():
                 shutil.rmtree(lec_dir)
             lec_dir.mkdir(parents=True, exist_ok=True)
-            # Phase (f) tweak: also publish individual .md files at NOTES_OUTPUT_BASE root
-            # so each lecture stands alone (no batch folder required). Collisions = last-run wins.
-            sess["_flat_lec_dir"] = lec_dir   # remember so we can copy out after run_single_lecture
+            if lec_dir not in processed_dirs:
+                processed_dirs.append(lec_dir)
 
             requested_steps = set(lec.get("steps", list(NOTES_DEFAULT_STEPS)))
 
@@ -1933,6 +1943,7 @@ def run_notes_batch(session_id, api_key, model_name, lectures, cooldown):
                 uploaded_enrich_path=lec.get("uploaded_enrich_path"),
                 uploaded_summary_path=lec.get("uploaded_summary_path"),
                 requested_steps=requested_steps, cancel_check=cancelled,
+                folder_stem=folder_stem,
             )
 
             # ── Per-lecture run. On 429 rotate KEY and re-run the WHOLE lecture (upload+generate
@@ -1943,7 +1954,6 @@ def run_notes_batch(session_id, api_key, model_name, lectures, cooldown):
             while not lecture_settled:
                 try:
                     run_single_lecture(provider=provider, **lec_kwargs)
-                    publish_notes_flat(label, sess.get("_flat_lec_dir"))
                     emit("lecture_done", lecture=idx, label=label)
                     lecture_settled = True
                 except NotesCancelled:
@@ -1975,7 +1985,6 @@ def run_notes_batch(session_id, api_key, model_name, lectures, cooldown):
                         lec_dir.mkdir(parents=True, exist_ok=True)
                         try:
                             run_single_lecture(provider=fallback_prov, **lec_kwargs)
-                            publish_notes_flat(label, sess.get("_flat_lec_dir"))
                             emit("lecture_done", lecture=idx, label=label)
                         except NotesCancelled:
                             was_cancelled = True
@@ -1995,24 +2004,27 @@ def run_notes_batch(session_id, api_key, model_name, lectures, cooldown):
             if was_cancelled:
                 break  # break the batch loop → package whatever landed as partial ZIP
 
-        # Package ZIP of whatever landed (partial save on cancel)
+        # Package ZIP of whatever landed (partial save on cancel). Flat structure: bundle each
+        # processed lecture dir, arcname relative to NOTES_OUTPUT_BASE → <stem>/<stem>_*.md inside.
         emit("step_start", lecture=-1, step="package", label="📁 สร้าง ZIP รวม")
-        zip_path = NOTES_OUTPUT_BASE / f"{batch_dir.name}.zip"
+        zip_path = NOTES_OUTPUT_BASE / f"{session_id}.zip"
         file_count = 0
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for f in sorted(batch_dir.rglob("*")):
-                if f.is_file():
-                    zf.write(f, f.relative_to(batch_dir))
-                    emit("step_log", lecture=-1, step="package",
-                         msg=f"  + {f.relative_to(batch_dir)}")
-                    file_count += 1
+            for d in processed_dirs:
+                for f in sorted(d.rglob("*")):
+                    if f.is_file():
+                        arc = f.relative_to(NOTES_OUTPUT_BASE)
+                        zf.write(f, arc)
+                        emit("step_log", lecture=-1, step="package", msg=f"  + {arc}")
+                        file_count += 1
 
+        folder_label = ", ".join(d.name for d in processed_dirs) or "notes"
         sess["zip_path"] = str(zip_path)
         sess["state"] = "stopped" if was_cancelled else "done"
         emit("step_log", lecture=-1, step="package",
              msg=f"✓ {zip_path.name} ({file_count} ไฟล์)")
         emit("step_done", lecture=-1, step="package", filename=zip_path.name)
-        emit("done", folder=batch_dir.name, zip=zip_path.name,
+        emit("done", folder=folder_label, zip=zip_path.name,
              session=session_id, total=len(lectures), cancelled=was_cancelled)
 
     except Exception as e:
@@ -2270,6 +2282,9 @@ def api_notes_run():
 
     for i in range(lecture_count):
         slide_file       = request.files.get(f"slide_{i}")
+        # Primary flow: pick a PDF already in input_pdfs/ (basename-strip → traversal guard).
+        # Upload (slide_file) stays as fallback. Pick takes precedence when both are present.
+        slide_pdf        = Path(request.form.get(f"slide_pdf_{i}", "").strip()).name
         transcript_file  = request.files.get(f"transcript_{i}")
         transcript_text  = request.form.get(f"transcript_text_{i}", "").strip()
         curriculum_file  = request.files.get(f"curriculum_map_{i}")
@@ -2283,7 +2298,13 @@ def api_notes_run():
         raw_steps = request.form.getlist(f"steps_{i}")
         requested_steps = set(raw_steps) if raw_steps else set(NOTES_DEFAULT_STEPS)
 
-        has_slide = slide_file and slide_file.filename
+        picked_path = None
+        if slide_pdf:
+            picked_path = INPUT_DIR / slide_pdf
+            if not picked_path.is_file():
+                return jsonify(error=f"ไม่พบไฟล์ {slide_pdf} ใน input_pdfs/"), 400
+
+        has_slide = bool(slide_pdf) or (slide_file and slide_file.filename)
         has_any = has_slide or any([
             uploaded_markdown   and uploaded_markdown.filename,
             uploaded_transcribe and uploaded_transcribe.filename,
@@ -2299,7 +2320,9 @@ def api_notes_run():
         lec_tmp.mkdir()
         lec = {"label": label, "steps": list(requested_steps)}
 
-        if has_slide:
+        if slide_pdf:
+            lec["folder_stem"] = _safe_stem(slide_pdf)
+        elif slide_file and slide_file.filename:
             lec["folder_stem"] = _safe_stem(slide_file.filename)
         elif uploaded_markdown and uploaded_markdown.filename:
             lec["folder_stem"] = _safe_stem(uploaded_markdown.filename)
@@ -2309,7 +2332,10 @@ def api_notes_run():
             safe_label = "".join(c if c.isalnum() or c in "-_" else "_" for c in label)[:40]
             lec["folder_stem"] = f"{i+1:02d}_{safe_label}"
 
-        if has_slide:
+        if slide_pdf:
+            lec["slide_path"] = str(picked_path)      # read in place from input_pdfs/
+            lec["slide_name"] = slide_pdf
+        elif slide_file and slide_file.filename:
             p = str(lec_tmp / slide_file.filename)
             slide_file.save(p)
             lec["slide_path"] = p
@@ -2343,13 +2369,10 @@ def api_notes_run():
         lectures.append(lec)
 
     session_id = str(uuid.uuid4())
-    timestamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
-    batch_dir  = NOTES_OUTPUT_BASE / f"batch_{timestamp}"
-    batch_dir.mkdir(parents=True, exist_ok=True)
+    NOTES_OUTPUT_BASE.mkdir(parents=True, exist_ok=True)
 
     notes_sessions[session_id] = {
         "queue":         queue.Queue(),
-        "output_dir":    batch_dir,
         "zip_path":      None,
         "tmp_dir":       str(tmp_dir),
         "lecture_count": len(lectures),
@@ -2421,44 +2444,34 @@ NOTES_HANDOFF_KINDS = {"enrich": "lecture-enrich.md", "summary": "lecture-summar
 
 @app.route("/api/notes/outputs")
 def api_notes_outputs():
-    """List both flat .md files (per-lecture) and batch subdirs (for phase-e handoff)."""
+    """List per-lecture flat outputs: notes_output/<stem>/<stem>_<kind>.md (phase-e handoff)."""
     outs = []
-    # Flat per-lecture .md files at NOTES_OUTPUT_BASE root
-    for f in sorted(NOTES_OUTPUT_BASE.glob("*.md"), key=lambda x: x.stat().st_mtime, reverse=True):
-        outs.append({
-            "source": "flat",
-            "name": f.name,
-            "size": f.stat().st_size,
-            "mtime": f.stat().st_mtime,
-        })
-    # Batch subdirectories (legacy phase-e handoff + ZIP)
-    batches = sorted(
-        [d for d in NOTES_OUTPUT_BASE.glob("batch_*") if d.is_dir()],
-        key=lambda x: x.stat().st_mtime, reverse=True,
-    )
-    for batch in batches:
-        for lec_dir in sorted(d for d in batch.iterdir() if d.is_dir()):
-            for kind, fname in NOTES_HANDOFF_KINDS.items():
-                f = lec_dir / fname
-                if f.exists():
-                    outs.append({
-                        "source": "batch",
-                        "batch": batch.name,
-                        "lecture": lec_dir.name,
-                        "kind": kind,
-                        "size": f.stat().st_size,
-                    })
+    if not NOTES_OUTPUT_BASE.exists():
+        return jsonify({"outputs": outs})
+    for lec_dir in sorted(NOTES_OUTPUT_BASE.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+        if not lec_dir.is_dir():
+            continue
+        stem = lec_dir.name
+        for kind, fname in NOTES_HANDOFF_KINDS.items():
+            f = lec_dir / f"{stem}_{fname}"
+            if f.exists():
+                outs.append({
+                    "source": "per_lecture",
+                    "lecture": stem,
+                    "kind": kind,
+                    "basename": f.name,
+                    "size": f.stat().st_size,
+                })
     return jsonify({"outputs": outs})
 
 @app.route("/api/notes/use-as-lecture", methods=["POST"])
 def api_notes_use_as_lecture():
     data = request.get_json(force=True, silent=True) or {}
-    batch = Path(str(data.get("batch", ""))).name    # strip path components
-    lecture = Path(str(data.get("lecture", ""))).name
+    lecture = Path(str(data.get("lecture", ""))).name   # strip path components
     kind = str(data.get("kind", ""))
     if kind not in NOTES_HANDOFF_KINDS:
         return jsonify(ok=False, error="ประเภทไฟล์ไม่ถูกต้อง"), 400
-    src = (NOTES_OUTPUT_BASE / batch / lecture / NOTES_HANDOFF_KINDS[kind]).resolve()
+    src = (NOTES_OUTPUT_BASE / lecture / f"{lecture}_{NOTES_HANDOFF_KINDS[kind]}").resolve()
     # traversal guard: source must resolve to a real file under NOTES_OUTPUT_BASE
     if NOTES_OUTPUT_BASE.resolve() not in src.parents or not src.is_file():
         return jsonify(ok=False, error="ไม่พบไฟล์"), 404
@@ -3697,7 +3710,9 @@ HTML_PAGE = r"""<!DOCTYPE html>
           <div class="field">
             <label>Gemini Model Selector</label>
             <select id="modelSelect">
-              <option value="gemini-3.5-flash" selected>gemini-3.5-flash (เร็วสูงสุด · ความสามารถระดับ Pro · แนะนำ)</option>
+              <option value="gemini-3.6-flash" selected>gemini-3.6-flash (เร็วสูงสุด · ความสามารถระดับ Pro · แนะนำ)</option>
+              <option value="gemini-3.5-flash">gemini-3.5-flash (เร็วสูงสุด · ความสามารถระดับ Pro)</option>
+              <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (ประหยัดค่าใช้จ่ายและประมวลผลเร็ว)</option>
               <option value="gemini-3.1-pro">gemini-3.1-pro (วิเคราะห์เชิงลึกและ Coding สูงสุด)</option>
               <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (ประหยัดค่าใช้จ่ายและประมวลผลเร็ว)</option>
               <option value="gemini-2.5-pro">gemini-2.5-pro (โมเดลระดับ Pro ความเสถียรสูง)</option>
@@ -3859,19 +3874,17 @@ async function applyCourse() {
       d.topics.forEach((t, i) => { prompt += `${i + 1}. [${t.subgroup}] ${t.topic}\n`; });
       prompt += '\nคำสั่งพิเศษ:\n';
       prompt += `- SubjectCode = ${d.subject_code}\n`;
-      prompt += `- category[0] = ${d.subject_code}_<ExamGroup>\n`;
-      prompt += `- category[1] = ${d.subject_code}_<SubGroupSuffix>_<TopicLabel>\n`;
+      prompt += `- category = ${d.subject_code}_by_AI_<SubGroupSuffix>_<TopicLabel>\n`;
       prompt += '  โดย <SubGroupSuffix> ต้องตรงกับกลุ่มวิชาในวงเล็บ [...] ของ topic นั้น (ตามรายการด้านบน)\n';
       prompt += '  และ <TopicLabel> ต้องตรงกับชื่อ lecture ทุกตัวอักษร\n';
       prompt += '- ถ้าข้อสอบไม่ตรงกับ lecture ใดเลย ให้ใช้ topic ที่ใกล้เคียงที่สุดจากรายการ';
       document.getElementById('additionalPrompt').value = prompt;
     } else if (d.subgroup === 'LEC' && d.topics && d.topics.length) {
-      let prompt = 'รายชื่อหัวข้อบรรยาย (Lecture Topics) สำหรับการ assign category[1]:\n';
+      let prompt = 'รายชื่อหัวข้อบรรยาย (Lecture Topics) สำหรับการ assign category:\n';
       d.topics.forEach((t, i) => { prompt += `${i + 1}. ${t}\n`; });
       prompt += '\nคำสั่งพิเศษ:\n';
       prompt += `- SubjectCode = ${d.subject_code}\n`;
-      prompt += `- SubGroupSuffix = LEC\n`;
-      prompt += `- category[1] = ${d.subject_code}_LEC_<TopicLabel> (ต้องตรงกับรายชื่อ lecture ทุกตัวอักษร)\n`;
+      prompt += `- category = ${d.subject_code}_by_AI_<TopicLabel> (ต้องตรงกับรายชื่อ lecture ทุกตัวอักษร)\n`;
       prompt += `- ถ้าข้อสอบไม่ตรงกับ lecture ใดเลย ให้ใช้ topic ที่ใกล้เคียงที่สุดจากรายการ`;
       document.getElementById('additionalPrompt').value = prompt;
     } else if (Array.isArray(d.subgroup) && d.subgroup.length) {
@@ -3879,8 +3892,7 @@ async function applyCourse() {
       prompt += `SubjectCode = ${d.subject_code}\n`;
       prompt += `SubGroupSuffix = auto-classify จาก disciplines ต่อไปนี้: ${d.subgroup.join(', ')}\n\n`;
       prompt += 'คำสั่งพิเศษ:\n';
-      prompt += `- category[0] = ${d.subject_code}_<ExamGroup>\n`;
-      prompt += `- category[1] = ${d.subject_code}_<SubGroupSuffix>_<TopicLabel>\n`;
+      prompt += `- category = ${d.subject_code}_by_AI_<SubGroupSuffix>_<TopicLabel>\n`;
       prompt += `- <SubGroupSuffix> ต้องเป็นหนึ่งใน: ${d.subgroup.join(' / ')}\n`;
       prompt += '- เลือก SubGroupSuffix ที่ตรงกับเนื้อหาหลักของข้อสอบแต่ละข้อ (keyword-based)\n';
       prompt += '- ห้ามใช้ LEC เป็น SubGroupSuffix';
@@ -4018,8 +4030,8 @@ async function loadNotesOutputs() {
       const desc = `${o.lecture} · ${kindLabel[o.kind] || o.kind} · ${kb} KB`;
       return `<div class="lec-item">
         <div class="lec-head" style="cursor:default">
-          <div class="file-label" title="${escHtml(o.batch)}/${escHtml(o.lecture)}">${escHtml(desc)}</div>
-          <button class="tb-btn" onclick="useNotesOutput('${escJs(o.batch)}','${escJs(o.lecture)}','${escJs(o.kind)}')">＋ ใช้</button>
+          <div class="file-label" title="${escHtml(o.lecture)}">${escHtml(desc)}</div>
+          <button class="tb-btn" onclick="useNotesOutput('${escJs(o.lecture)}','${escJs(o.kind)}')">＋ ใช้</button>
         </div>
       </div>`;
     }).join('');
@@ -4028,11 +4040,11 @@ async function loadNotesOutputs() {
   }
 }
 
-async function useNotesOutput(batch, lecture, kind) {
+async function useNotesOutput(lecture, kind) {
   try {
     const r = await fetch('/api/notes/use-as-lecture', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ batch, lecture, kind }),
+      body: JSON.stringify({ lecture, kind }),
     });
     const d = await r.json();
     if (!d.ok) { alert(d.error || 'ดึงไฟล์ไม่สำเร็จ'); return; }
@@ -4480,7 +4492,11 @@ function notesAddLecture(defaults = {}) {
     <div class="n-lecture-body">
       <div class="field">
         <label>📄 PDF Slide <span style="color:var(--err)">*</span></label>
-        <div class="hint">ชื่อโฟลเดอร์ output จะใช้ชื่อไฟล์ PDF นี้</div>
+        <div class="hint">ชื่อไฟล์ .md และโฟลเดอร์ output จะใช้ชื่อไฟล์ PDF นี้</div>
+        <select class="n-pdf-select" data-field="slide_pdf_${idx}" onchange="notesPickPdf(this,${idx})"
+                style="width:100%;margin-bottom:.4rem;padding:.45rem;background:#fff;color:#000;border:1px solid var(--border,#333);border-radius:6px;font-size:.78rem">
+          <option value="">— เลือก PDF จาก input_pdfs/ หรืออัปโหลดด้านล่าง —</option>
+        </select>
         <div class="n-drop-zone" id="ndz-slide-${idx}">
           <input type="file" data-field="slide_${idx}" accept=".pdf" onchange="notesSetDz('ndz-slide-${idx}',this)">
           <div class="n-dz-icon">📑</div>
@@ -4527,7 +4543,40 @@ function notesAddLecture(defaults = {}) {
   body.appendChild(notesBuildStepsSelector(idx));
   wrap.appendChild(div);
   notesSetupDropZones(div);
+  notesFillPdfSelect(div.querySelector('.n-pdf-select'));
   notesRenumber();
+}
+
+// ── PDF picker (from input_pdfs/) — primary flow; drop-zone upload is the fallback ──
+let notesPdfCache = null;
+async function notesLoadPdfList() {
+  if (notesPdfCache) return notesPdfCache;
+  try {
+    const r = await fetch('/api/files');
+    const d = await r.json();
+    notesPdfCache = d.files || [];
+  } catch(e) { notesPdfCache = []; }
+  return notesPdfCache;
+}
+async function notesFillPdfSelect(sel) {
+  if (!sel) return;
+  const files = await notesLoadPdfList();
+  const keep = sel.value;
+  for (const f of files) {
+    const o = document.createElement('option');
+    o.value = f; o.textContent = f;
+    sel.appendChild(o);
+  }
+  if (files.includes(keep)) sel.value = keep;
+}
+function notesPickPdf(sel, idx) {
+  // Autofill the label from the picked PDF name if the label is still empty.
+  if (!sel.value) return;
+  const card = sel.closest('.n-lecture-card');
+  const labelInp = card ? card.querySelector('.n-lecture-header input[type=text]') : null;
+  if (labelInp && !labelInp.value.trim()) {
+    labelInp.value = sel.value.replace(/\.pdf$/i, '').replace(/_/g, ' ').trim();
+  }
 }
 
 function notesRemoveLecture(idx, e) {
@@ -4548,6 +4597,14 @@ function notesToggleCard(idx) {
 function notesSetDz(dzId, inp) {
   const fn = document.querySelector(`#${dzId} .n-dz-filename`);
   if (fn) fn.textContent = inp.files[0] ? inp.files[0].name : '';
+  // Auto-fill label from slide PDF name (strip extension)
+  if (dzId.startsWith('ndz-slide-') && inp.files[0]) {
+    const card = inp.closest('.n-lecture-card');
+    const labelInp = card ? card.querySelector('.n-lecture-header input[type=text]') : null;
+    if (labelInp && !labelInp.value.trim()) {
+      labelInp.value = inp.files[0].name.replace(/\.pdf$/i, '').replace(/_/g, ' ').trim();
+    }
+  }
 }
 function notesSetupDropZones(root) {
   root.querySelectorAll('.n-drop-zone').forEach(dz => {
@@ -4574,6 +4631,8 @@ function notesBuildFormData() {
     card.querySelectorAll('.n-step-toggle input:checked').forEach(inp => {
       fd.append(`steps_${i}`, inp.closest('.n-step-toggle').dataset.step);
     });
+    const pdfSel = card.querySelector('.n-pdf-select');
+    if (pdfSel && pdfSel.value) fd.append(`slide_pdf_${i}`, pdfSel.value);
     card.querySelectorAll('input[type=file]').forEach(inp => {
       if (inp.dataset.field && inp.files[0]) {
         fd.append(inp.dataset.field.replace(/_\d+$/, `_${i}`), inp.files[0]);
@@ -4752,17 +4811,19 @@ async function loadNotesFlatFiles() {
   try {
     const res = await fetch('/api/notes/outputs');
     const data = await res.json();
-    const flat = data.outputs.filter(o => o.source === 'flat');
+    const outs = (data.outputs || []).filter(o => o.source === 'per_lecture');
     const area = document.getElementById('notesFlatFilesArea');
     if (!area) return;
     area.innerHTML = '';
-    if (flat.length === 0) { area.innerHTML = '<div class="n-flat-empty">ยังไม่มีสรุปเลกเชอร์แบบเดี่ยว</div>'; return; }
-    for (const f of flat) {
+    if (outs.length === 0) { area.innerHTML = '<div class="n-flat-empty">ยังไม่มีสรุปเลกเชอร์แบบเดี่ยว</div>'; return; }
+    const kindLabel = { enrich: 'Enrich', summary: 'Summary' };
+    for (const f of outs) {
+      const url = `/notes/static/${encodeURIComponent(f.lecture)}/${encodeURIComponent(f.basename)}`;
       const div = document.createElement('div');
       div.className = 'n-flat-file';
       div.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;padding:.5rem 0">
-        <div style="font-weight:600">${escHtml(f.name)}</div>
-        <div><a href="/notes/static/${encodeURIComponent(f.name)}" target="_blank">⬇ เปิด/ดาวน์โหลด</a></div>
+        <div style="font-weight:600">${escHtml(f.lecture)} · ${escHtml(kindLabel[f.kind] || f.kind)}</div>
+        <div><a href="${url}" target="_blank">⬇ เปิด/ดาวน์โหลด</a></div>
       </div>`;
       area.appendChild(div);
     }
@@ -4778,9 +4839,10 @@ async function loadNotesFlatFiles() {
 
 
 # Static route for flat notes files (served by Flask, not embedded HTML)
-@app.route('/notes/static/<path:fname>')
-def notes_static(fname):
-    p = NOTES_OUTPUT_BASE / Path(fname).name
+@app.route('/notes/static/<stem>/<fname>')
+def notes_static(stem, fname):
+    # Flat layout: notes_output/<stem>/<fname>. Basename-strip both → traversal guard.
+    p = NOTES_OUTPUT_BASE / Path(stem).name / Path(fname).name
     if not p.exists() or not p.is_file():
         return 'Not found', 404
     return send_file(p, as_attachment=True)
