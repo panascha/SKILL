@@ -8,14 +8,25 @@ A personal skill/tool library for medical AI workflows, targeting KKU medical st
 
 | Path | What it is |
 |---|---|
+| `med/MedSuite/` | **In-progress** unification of the three tools below into one tabbed Flask app. Build sequentially per `med/MedSuite_PLAN.md`; live state in `med/MedSuite/handoff.md`. |
 | `med/Medical MCQ convert/` | Flask app that converts MCQ PDFs → JSON/JS via Gemini |
 | `med/Medical MCQ generator/` | Extended version that also *generates* new MCQs from lecture slides |
 | `med/Medical note/lecture-pipeline/` | Flask app that runs a 5-step note-enrichment pipeline on lecture slides |
 | `kku/` | KKU IntelSphere API skill (OpenAI-compatible LLM platform) |
 | `index.html` | Single-page markdown viewer (static, no build step) |
-| `engineering/`, `med/*.md`, `medical technologist/` | Prompt skill library (markdown only, no code) |
+| `engineering/`, `med/*.md`, `med/Medical learning/`, `med/Medical report/`, `med/MDKKUQUIZ/`, `medical technologist/` | Prompt skill library (markdown only, no code) |
 
 Each sub-project has its own `CLAUDE.md` with full detail. This file covers cross-cutting concerns.
+
+### MedSuite (active build)
+
+`med/MedSuite/` merges MCQ Convert (base) + MCQ Generator + Notes pipeline into one Flask app
+(port 8765, tabs Convert/Generate/Notes). **Before working on it, read `med/MedSuite/handoff.md`
+first** (current phase + verified state), then `med/MedSuite_PLAN.md` (locked decisions, phases a–f).
+Phase (a) done: Convert grafted unchanged + a shared cancel/stop engine (`POST /api/cancel/<job_id>`,
+per-unit boundary → partial-save → `state="stopped"`). **Phase (f) — archiving the 3 originals to
+`med/_archive/` — is destructive and gated on explicit user confirmation; never run it unprompted.**
+Run it with `PYTHONUTF8=1 python convert.py` on Windows (cp874 console crashes `print()` on emoji).
 
 ---
 
@@ -186,6 +197,26 @@ Skills live in `med/Medical MCQ convert/.claude/skills/`:
 
 - **`/convert-medical`** — guided end-to-end conversion: checks server, builds `additional_prompt` from course preset, fires `/api/run`, monitors progress, verifies categories.
 - **`/create-course`** — parses a KKU Moodle page (Ctrl+A paste) to extract lecture topics and writes a `courses/*.json` preset.
+
+---
+
+## Skill library workflow
+
+Prompt skills (markdown-only, no code) live in `engineering/`, `med/Medical learning/`, `med/Medical report/`, etc. Static repo — no build step, no hosting. "Deploy" = push to GitHub.
+
+**Commit new/modified skills:**
+```bash
+git add engineering/*.md "med/Medical learning/*.md"    # stage new skill markdown
+git commit -m "feat: add <skill-name> skill"             # conventional commit
+git push origin <branch>
+```
+
+**Commit message patterns** (from history):
+- `feat: add <skill-name> skill` — new skill
+- `docs: update <skill-name> skill rules` — edit existing
+- `feat: add skills for <category>` — batch add
+
+**Before committing:** verify skill markdown renders correctly in `index.html` (single-page viewer, no build step).
 
 ---
 

@@ -212,11 +212,22 @@ def parse_filename_metadata(file_stem: str) -> dict:
         "topic_label": topic_label
     }
 
+CATEGORY_SEP = "_by AI_"   # รูปแบบที่ระบบอัปโหลดต้องการ: <Subject>_by AI_<SubGroup>_<Topic Label>
+
+
+def normalize_category(cat: str) -> str:
+    """Collapse spaces, remove illegal chars. Spaces are kept — the upload target wants
+    readable topic labels (e.g. 'RS_by AI_RADIO_Imaging RS')."""
+    cat = re.sub(r"[^A-Za-z0-9 _]", '', cat)
+    cat = re.sub(r"\s+", ' ', cat).strip()
+    return cat.replace("_by_AI_", CATEGORY_SEP)
+
+
 def sanitize_category(category_data, file_stem: str, subject_code_override: str = "") -> str:
     """
     Returns a single category string for the question, used as the quizdata.js key.
-    Format: <SubjectCode>_by_AI_<SubGroup>_<TopicLabel>  (MAPPED / classified)
-            <SubjectCode>_by_AI_<TopicLabel>              (LEC / no subgroup)
+    Format: <SubjectCode>_by AI_<SubGroup>_<Topic Label>  (MAPPED / classified)
+            <SubjectCode>_by AI_<Topic Label>             (LEC / no subgroup)
     subject_code_override: if provided, overrides the SubjectCode derived from filename.
     """
     file_stem = file_stem.strip()
@@ -251,6 +262,24 @@ def sanitize_category(category_data, file_stem: str, subject_code_override: str 
     elif category_data:
         model_topic = str(category_data).strip()
         
+    # โมเดลส่ง CategoryID เต็มรูปแบบมาแล้ว (<Subject>_by AI_<SubGroup>_<Topic>) → ใช้ตามนั้น
+    # ถ้าเอาไปต่อ prefix ซ้ำจะได้ id ซ้อน เช่น CONCEPT_by AI_RADIO_RS_by AI_RADIO_Topic
+    # รับทั้งรูปแบบเก่า (_by_AI_) และใหม่ (_by AI_) แต่ส่งออกเป็น _by AI_ เสมอ
+    model_sep = next((s for s in (CATEGORY_SEP, "_by_AI_") if s in (model_topic or "")), None)
+    if model_sep:
+        parts = [p.strip(" _-") for p in model_topic.split(model_sep) if p.strip(" _-")]
+        if len(parts) > 1:
+            subject = subject_code_override.strip().upper() if subject_code_override else parts[0]
+            tail = parts[-1]
+            head, _, rest = tail.partition("_")
+            if head.upper() == "LEC":
+                tail = rest.replace("_", " ")            # โหมด LEC ไม่ใส่ SubGroup
+            elif head.upper() in subgroups:
+                tail = f"{head.upper()}_{rest.replace('_', ' ')}"
+            else:
+                tail = tail.replace("_", " ")            # ไม่มี SubGroup → เป็น topic label ล้วน
+            return normalize_category(f"{subject}{CATEGORY_SEP}{tail}")
+
     if model_topic:
         for pfx in prefixes_to_remove:
             if model_topic.upper().startswith(pfx.upper()):
@@ -333,19 +362,14 @@ def sanitize_category(category_data, file_stem: str, subject_code_override: str 
         sub_group = "CLINICAL"
 
     # Build single-string category per new spec:
-    # For MAPPED (non-LEC): <subject>_by_AI_<SUBGROUP>_<TopicLabel>
-    # For LEC: <subject>_by_AI_<TopicLabel>
+    # For MAPPED (non-LEC): <subject>_by AI_<SUBGROUP>_<Topic Label>
+    # For LEC: <subject>_by AI_<Topic Label>
     if sub_group == 'LEC':
-        cat = f"{subject_code}_by_AI_{clean_topic}"
+        cat = f"{subject_code}{CATEGORY_SEP}{clean_topic}"
     else:
-        cat = f"{subject_code}_by_AI_{sub_group}_{clean_topic}"
+        cat = f"{subject_code}{CATEGORY_SEP}{sub_group}_{clean_topic}"
 
-    # Normalize: collapse spaces, remove illegal chars, convert spaces to underscores
-    cat = re.sub(r"\s+", ' ', cat).strip()
-    cat = re.sub(r"[^A-Za-z0-9 _]", '', cat)
-    cat = cat.replace(' ', '_')
-
-    return cat
+    return normalize_category(cat)
 
 
 # ─── Default Prompt ───────────────────────────────────
@@ -664,6 +688,31 @@ def execute_with_retry(job: dict, func, *args, max_retries=2, initial_delay=8, *
                 raise e
 
 # ─── Generate-mode helpers (grafted from MCQ generator) ─
+def max_output_for(model_name: str) -> int:
+    """
+    Single source of truth for max_output_tokens (was duplicated at 4 call sites with
+    drifting substring checks — 'gemini-3.6-flash' matched none of them and silently
+    fell back to 8192, truncating Generate/Notes responses).
+    ทุกโมเดลตระกูล 2.5 / 3.x / Flash-Lite รองรับ 65,535+ โทเค็นแบบ native.
+    """
+    return 65536
+
+
+def _log_finish(job: dict, tag: str, response) -> None:
+    """[DBG-cap] probe — finish_reason + token accounting. grep '[DBG-cap]' to remove."""
+    try:
+        fr = response.candidates[0].finish_reason
+        um = response.usage_metadata
+        push_log(
+            job,
+            f"[DBG-cap] {tag} finish={fr} out={getattr(um,'candidates_token_count',None)} "
+            f"think={getattr(um,'thoughts_token_count',None)} total={getattr(um,'total_token_count',None)}",
+            "info",
+        )
+    except Exception as e:
+        push_log(job, f"[DBG-cap] {tag} no usage_metadata: {e}", "warn")
+
+
 def generate_content_with_fallback(job: dict, pool, primary_model: str, contents, config, max_retries=5):
     """
     Gemini generate_content with dynamic retry + model fallback. On 429/RESOURCE_EXHAUSTED
@@ -836,8 +885,7 @@ def process_pdf(job: dict, client, model_name: str, pdf_path: Path, subject_titl
         push_log(job, f"[{stem}] ไม่พบ {PROMPT_FILE.name} — ใช้ Default Prompt", "warn")
 
     # ── max_output_tokens ──
-    # ตั้งค่า 65536 เป็นมาตรฐานสำหรับทุกโมเดล (ตระกูล 2.5, 3.x และ Flash-Lite รองรับขีดจำกัด 65,535+ โทเค็นทั้งหมดแบบ Native)
-    max_out = 65536
+    max_out = max_output_for(model_name)
 
     generation_cfg = types.GenerateContentConfig(
         system_instruction=system_prompt,
@@ -1339,10 +1387,10 @@ def run_generation(job_id: str, api_key: str, model_name: str, lecture_files: li
                 continue
 
         # ── Config ──
-        if "pro" in model_name.lower() or "3.5" in model_name or "2.5" in model_name:
-            max_out = 65536
-        else:
-            max_out = 8192
+        max_out = max_output_for(model_name)
+        # Thinking tokens count against max_output_tokens. Left unbounded a 3.x model can
+        # burn the budget on thoughts and emit a truncated JSON prefix — [DBG-cap] logs
+        # thoughts_token_count so we can decide whether 3.x needs an explicit budget too.
         thinking_cfg = None
         if "2.5" in model_name:
             if "flash" in model_name.lower():
@@ -1363,6 +1411,7 @@ def run_generation(job_id: str, api_key: str, model_name: str, lecture_files: li
             )
             raw = response.text
             push_log(job, f"[{filename}] ได้รับผลลัพธ์ข้อสอบจาก AI ({len(raw):,} ตัวอักษร)", "ok")
+            _log_finish(job, filename, response)
         except Exception as e:
             _fail(f"[{filename}] เรียก Gemini API ล้มเหลว: {e}")
             continue
@@ -1440,6 +1489,11 @@ def run_generation(job_id: str, api_key: str, model_name: str, lecture_files: li
             job["results"].append({"file": filename, "status": "success",
                                    "questions": len(questions_list), "errors": [], "elapsed": 0})
             push_log(job, f"✓ [{filename}] สร้างสำเร็จ {len(questions_list)} ข้อ → output/{folder_name}/", "ok")
+            # Truncated payloads are silently salvaged by extract_valid_questions_from_broken_json,
+            # so a short batch used to look like a clean success. Surface the shortfall.
+            if len(questions_list) < num_questions:
+                push_log(job, f"⚠️ [{filename}] ได้ {len(questions_list)} ข้อ จากที่ขอ {num_questions} ข้อ "
+                              f"(คำตอบอาจถูกตัดกลางคัน — ดูบรรทัด [DBG-cap] finish=)", "warn")
         except Exception as e:
             preview = raw[:500] if len(raw) <= 500 else raw[:500] + "..."
             _fail(f"[{filename}] ประมวลผลคำตอบของ AI ล้มเหลว: {e}")
@@ -1538,10 +1592,7 @@ class GoogleProvider:
         self.client = self._pool.current_client
         self.model_name = model_name
 
-        if "pro" in model_name.lower() or "3.5" in model_name or "3.1" in model_name:
-            max_out = 65536
-        else:
-            max_out = 8192
+        max_out = max_output_for(model_name)
 
         self.generation_cfg = types.GenerateContentConfig(
             max_output_tokens=max_out,
@@ -1646,10 +1697,7 @@ class GoogleProvider:
         clone.model_name = model_name
         clone._last_call = self._last_call
         clone._min_interval = self._min_interval
-        if "pro" in model_name.lower():
-            max_out = 65536
-        else:
-            max_out = 8192
+        max_out = max_output_for(model_name)
         clone.generation_cfg = self._types.GenerateContentConfig(
             max_output_tokens=max_out,
             temperature=0.3,
@@ -1657,7 +1705,7 @@ class GoogleProvider:
         return clone
 
     def fallback_model(self):
-        is_frontier = any(m in self.model_name for m in ["3.5", "3.1"])
+        is_frontier = any(m in self.model_name for m in ["3.6", "3.5", "3.1"])
         if not is_frontier:
             return None
         fallback_name = "gemini-2.5-flash" if "flash" in self.model_name else "gemini-2.5-pro"
@@ -3874,7 +3922,7 @@ async function applyCourse() {
       d.topics.forEach((t, i) => { prompt += `${i + 1}. [${t.subgroup}] ${t.topic}\n`; });
       prompt += '\nคำสั่งพิเศษ:\n';
       prompt += `- SubjectCode = ${d.subject_code}\n`;
-      prompt += `- category = ${d.subject_code}_by_AI_<SubGroupSuffix>_<TopicLabel>\n`;
+      prompt += `- category = ${d.subject_code}_by AI_<SubGroupSuffix>_<Topic Label>\n`;
       prompt += '  โดย <SubGroupSuffix> ต้องตรงกับกลุ่มวิชาในวงเล็บ [...] ของ topic นั้น (ตามรายการด้านบน)\n';
       prompt += '  และ <TopicLabel> ต้องตรงกับชื่อ lecture ทุกตัวอักษร\n';
       prompt += '- ถ้าข้อสอบไม่ตรงกับ lecture ใดเลย ให้ใช้ topic ที่ใกล้เคียงที่สุดจากรายการ';
@@ -3884,7 +3932,7 @@ async function applyCourse() {
       d.topics.forEach((t, i) => { prompt += `${i + 1}. ${t}\n`; });
       prompt += '\nคำสั่งพิเศษ:\n';
       prompt += `- SubjectCode = ${d.subject_code}\n`;
-      prompt += `- category = ${d.subject_code}_by_AI_<TopicLabel> (ต้องตรงกับรายชื่อ lecture ทุกตัวอักษร)\n`;
+      prompt += `- category = ${d.subject_code}_by AI_<Topic Label> (ต้องตรงกับรายชื่อ lecture ทุกตัวอักษร)\n`;
       prompt += `- ถ้าข้อสอบไม่ตรงกับ lecture ใดเลย ให้ใช้ topic ที่ใกล้เคียงที่สุดจากรายการ`;
       document.getElementById('additionalPrompt').value = prompt;
     } else if (Array.isArray(d.subgroup) && d.subgroup.length) {
@@ -3892,7 +3940,7 @@ async function applyCourse() {
       prompt += `SubjectCode = ${d.subject_code}\n`;
       prompt += `SubGroupSuffix = auto-classify จาก disciplines ต่อไปนี้: ${d.subgroup.join(', ')}\n\n`;
       prompt += 'คำสั่งพิเศษ:\n';
-      prompt += `- category = ${d.subject_code}_by_AI_<SubGroupSuffix>_<TopicLabel>\n`;
+      prompt += `- category = ${d.subject_code}_by AI_<SubGroupSuffix>_<Topic Label>\n`;
       prompt += `- <SubGroupSuffix> ต้องเป็นหนึ่งใน: ${d.subgroup.join(' / ')}\n`;
       prompt += '- เลือก SubGroupSuffix ที่ตรงกับเนื้อหาหลักของข้อสอบแต่ละข้อ (keyword-based)\n';
       prompt += '- ห้ามใช้ LEC เป็น SubGroupSuffix';
